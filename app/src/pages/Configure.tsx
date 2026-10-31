@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import { NUMERIC_PARAMS, SIZE_PRESETS, ZONE_IDS, type NumericKey, type PetalLook, type SizePreset, type ZoneId } from '@/domain/params'
-import { estimateMass, hasBlockingIssue } from '@/domain/validate'
+import { NUMERIC_PARAMS, SIZE_PRESETS, ZONE_IDS, type Mode, type NumericKey, type PetalLook, type SizePreset, type ZoneId } from '@/domain/params'
+import { estimateMass, hasBlockingIssue, hiddenProSettings } from '@/domain/validate'
 import { useConfig } from '@/features/ConfigContext'
 import { MaskStage } from '@/features/MaskStage'
 import { LookPanel, MotionPanel } from '@/features/PetalControls'
-import { issueText, Note, NumberField, PageTitle, Section, SelectField, SwitchField, TextField } from '@/features/shared'
+import { issueText, Note, NumberField, PageTitle, Section, Segmented, SelectField, SwitchField, TextField } from '@/features/shared'
 import { INITIAL_SIMULATION, SimulationPanel } from '@/features/SimulationPanel'
 import { tiles } from '@/geometry/mask'
 import { useI18n } from '@/i18n'
@@ -16,14 +16,20 @@ import { ShareControl } from './Preview'
 const keysOf = (group: string, mode?: 'simple' | 'pro') =>
   NUMERIC_PARAMS.filter((p) => p.group === group && (!mode || p.mode === mode)).map((p) => p.key as NumericKey)
 
-const TABS = ['look', 'motion', 'simulate', 'fit', 'feedback', 'review'] as const
+const TABS = ['look', 'motion', 'fit', 'feedback', 'review'] as const
 type Tab = (typeof TABS)[number]
 
 function FitPanel({ onHighlight }: { onHighlight: (zone: ZoneId | null) => void }) {
   const { t } = useI18n()
-  const { config, update } = useConfig()
+  const { config, issues, update } = useConfig()
   const toggle = (zone: ZoneId, on: boolean) =>
     update({ enabledZones: on ? [...config.enabledZones, zone] : config.enabledZones.filter((z) => z !== zone) })
+  const measures = (
+    <div className="grid gap-4 sm:grid-cols-2">
+      {keysOf('measure').map((key) => <NumberField key={key} name={key} />)}
+    </div>
+  )
+  const needsMeasures = config.sizePreset === 'custom' || issues.some((i) => i.field && keysOf('measure').includes(i.field))
   return (
     <div className="grid gap-5">
       <Section title={t('zones.title')} hint={t('zones.lead')}>
@@ -54,9 +60,12 @@ function FitPanel({ onHighlight }: { onHighlight: (zone: ZoneId | null) => void 
           <option value="L">L</option>
           <option value="custom" disabled={config.sizePreset !== 'custom'}>{t('size.custom')}</option>
         </SelectField>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {keysOf('measure').map((key) => <NumberField key={key} name={key} />)}
-        </div>
+        {config.mode === 'pro' ? measures : (
+          <details open={needsMeasures}>
+            <summary className="min-h-11 cursor-pointer py-2 font-medium">{t('size.manual')}</summary>
+            {measures}
+          </details>
+        )}
       </Section>
     </div>
   )
@@ -70,8 +79,11 @@ const FEEDBACK_PRESETS: Record<string, Partial<Record<NumericKey, number>>> = {
 
 function FeedbackPanel() {
   const { t } = useI18n()
-  const { config, role, update } = useConfig()
+  const { config, issues, role, update } = useConfig()
   const locked = role === 'helper'
+  const pro = config.mode === 'pro'
+  const fineKeys = keysOf('feedback', 'pro')
+  const showFine = pro || issues.some((i) => i.field && fineKeys.includes(i.field))
   const setCue = (key: keyof typeof config.cues, on: boolean) => update({ cues: { ...config.cues, [key]: on }, feedbackConfirmed: false })
   return (
     <div className="grid gap-5">
@@ -97,7 +109,7 @@ function FeedbackPanel() {
           <option value="strong">{t('fb.presetStrong')}</option>
         </SelectField>
         {keysOf('feedback', 'simple').map((key) => <NumberField key={key} name={key} disabled={locked} />)}
-        {ZONE_IDS.filter((z) => config.enabledZones.includes(z)).map((zone) => (
+        {pro && ZONE_IDS.filter((z) => config.enabledZones.includes(z)).map((zone) => (
           <SelectField
             key={zone}
             label={t('zones.haptic', { zone: t(`place.${zone}`) })}
@@ -115,9 +127,9 @@ function FeedbackPanel() {
           </SelectField>
         ))}
       </Section>
-      {config.mode === 'pro' && (
+      {showFine && (
         <Section title={t('fb.distance')}>
-          {keysOf('feedback', 'pro').map((key) => <NumberField key={key} name={key} disabled={locked} />)}
+          {fineKeys.map((key) => <NumberField key={key} name={key} disabled={locked} />)}
         </Section>
       )}
       <Note tone="sage">
@@ -199,12 +211,14 @@ export default function Configure() {
   const panel = useRef<HTMLDivElement>(null)
   const tabs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({})
 
-  const [sim, setSim] = useState<Simulation>(INITIAL_SIMULATION)
+  const [sim, setSim] = useState<Simulation>({ ...INITIAL_SIMULATION, kind: 'rest' })
   const [selected, setSelected] = useState<string | null>(null)
   const [pressed, setPressed] = useState<string[]>([])
   const [highlight, setHighlight] = useState<ZoneId | null>(null)
   const result = useMemo(() => resolveSimulation(config, sim), [config, sim])
-  const simulating = tab === 'simulate'
+  const simulating = tab === 'motion'
+  const pro = config.mode === 'pro'
+  const hidden = pro ? 0 : hiddenProSettings(config)
 
   const go = (next: Tab, focusPanel = true) => {
     setParams(next === 'look' ? {} : { tab: next }, { replace: true })
@@ -230,6 +244,10 @@ export default function Configure() {
     setSelected(id)
     if (id && tab !== 'motion') go('motion', false)
   }
+  const press = (ids: string[]) => {
+    setSim({ ...sim, kind: 'rest' })
+    setPressed(ids)
+  }
   const look = (patch: Partial<PetalLook>) => update({ look: { ...config.look, ...patch } })
   const blockers = issues.filter((i) => i.severity === 'error').length
 
@@ -237,15 +255,22 @@ export default function Configure() {
     <div>
       <header className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <PageTitle>{config.name}</PageTitle>
-        <div className="flex flex-wrap items-end gap-3">
-          <TextField label={t('cfg.name')} value={config.name} onChange={(e) => update({ name: e.target.value })} />
-          <SelectField label={t('cfg.modeLabel')} value={config.mode} onChange={(e) => update({ mode: e.target.value as typeof config.mode })}>
-            <option value="simple">{t('cfg.modeSimple')}</option>
-            <option value="pro">{t('cfg.modePro')}</option>
-          </SelectField>
-        </div>
+        <TextField label={t('cfg.name')} value={config.name} onChange={(e) => update({ name: e.target.value })} />
       </header>
+      <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <Segmented<Mode>
+          label={t('cfg.modeLabel')}
+          value={config.mode}
+          onChange={(mode) => update({ mode })}
+          options={[
+            { value: 'simple', label: t('cfg.modeSimple') },
+            { value: 'pro', label: t('cfg.modePro') },
+          ]}
+        />
+        <p className="text-sm text-muted">{t(pro ? 'cfg.modeProHint' : 'cfg.modeSimpleHint')}</p>
+      </div>
       {role === 'helper' && <div className="mb-4"><Note>{t('cfg.helperNote')}</Note></div>}
+      {hidden > 0 && <div className="mb-4"><Note>{t('cfg.hiddenPro', { n: hidden })}</Note></div>}
 
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(24rem,1fr)]">
         <aside className="lg:sticky lg:top-4" aria-label={t('preview.title')}>
@@ -255,9 +280,9 @@ export default function Configure() {
             stateName={t(`mode.${simulating ? sim.kind : 'rest'}`)}
             pulseHz={simulating ? result.pulseHz : 0}
             highlightZone={highlight}
-            selected={selected}
+            selected={pro ? selected : null}
             pressed={pressed}
-            onSelect={pick}
+            onSelect={pro ? pick : undefined}
           />
         </aside>
 
@@ -282,18 +307,21 @@ export default function Configure() {
             ))}
           </div>
           <div id="tab-panel" ref={panel} role="tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={-1} className="p-4 outline-none sm:p-5">
-            {tab === 'look' && <LookPanel look={config.look} onChange={look} />}
+            {tab === 'look' && <LookPanel look={config.look} pro={pro} onChange={look} />}
             {tab === 'motion' && (
               <MotionPanel
                 config={config}
                 locked={role === 'helper'}
                 selected={selected}
                 onSelect={setSelected}
-                onPress={setPressed}
+                onPress={press}
                 onChange={(patch) => update({ motion: { ...config.motion, ...patch }, feedbackConfirmed: false })}
-              />
+              >
+                <Section title={t('motion.simulate')} hint={t('motion.simulateHint')}>
+                  <SimulationPanel config={config} sim={sim} result={result} onChange={setSim} />
+                </Section>
+              </MotionPanel>
             )}
-            {tab === 'simulate' && <SimulationPanel config={config} sim={sim} result={result} onChange={setSim} />}
             {tab === 'fit' && <FitPanel onHighlight={setHighlight} />}
             {tab === 'feedback' && <FeedbackPanel />}
             {tab === 'review' && <ReviewPanel onGo={go} />}

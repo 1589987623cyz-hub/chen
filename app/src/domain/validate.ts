@@ -23,6 +23,14 @@ export function weakSectors(config: Config) {
   })
 }
 
+/** Professional settings that keep working while simple mode hides their controls. */
+export function hiddenProSettings(config: Config) {
+  const { motion, look, hapticByZone, values } = config
+  const counts = [motion.zoneTravel, look.zonePalette, look.zoneBloom, hapticByZone].map((map) => Object.keys(map).length)
+  const distances = NUMERIC_PARAMS.filter((p) => p.mode === 'pro' && values[p.key] !== p.def).length
+  return counts.reduce((sum, n) => sum + n, distances) + (motion.pattern === 'together' ? 0 : 1)
+}
+
 export function validate(config: Config): Issue[] {
   const v = config.values
   const issues: Issue[] = []

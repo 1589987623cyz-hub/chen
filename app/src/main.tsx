@@ -23,7 +23,7 @@ createRoot(document.getElementById('root')!).render(
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="configure/:id" element={<ConfigRoute />}>
                 <Route index element={<Configure />} />
-                <Route path="preview" element={<Navigate to="../?tab=simulate" relative="path" replace />} />
+                <Route path="preview" element={<Navigate to="../?tab=motion" relative="path" replace />} />
                 <Route path="export" element={<Export />} />
                 <Route path="collaborators" element={<Collaborators />} />
               </Route>
