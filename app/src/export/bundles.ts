@@ -1,6 +1,6 @@
-import { NUMERIC_PARAMS, ZONES, type Config } from '@/domain/params'
-import { estimateSideMass } from '@/domain/validate'
-import { buildPrintParts, buildShell, buildWorn, petalCount, type Part } from '@/geometry/mask'
+import { NUMERIC_PARAMS, type Config } from '@/domain/params'
+import { estimateMass } from '@/domain/validate'
+import { buildParts, maskParams, pins, tiles, type Part } from '@/geometry/mask'
 import { translate, type Lang } from '@/i18n'
 import { stlBinary, threeMf, zip, type ZipEntry } from './files'
 
@@ -8,16 +8,14 @@ export function configJson(data: Config | Config[]) {
   return new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
 }
 
-export function printPackage(config: Config) {
+export function printPackage() {
   const entries: ZipEntry[] = []
-  for (const part of buildPrintParts(config)) {
+  for (const part of buildParts()) {
     entries.push({ path: `stl/${part.group}/${part.name}.stl`, data: stlBinary(part.mesh, part.name) })
     entries.push({ path: `3mf/${part.group}/${part.name}.3mf`, data: threeMf(part.mesh, part.name) })
   }
   return new Blob([zip(entries) as BlobPart], { type: 'application/zip' })
 }
-
-const fullDeploy = () => Object.fromEntries(ZONES.map((z) => [z.id, 1])) as Parameters<typeof buildWorn>[1]['deploy']
 
 const escapeHtml = (text: string) =>
   text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
@@ -30,17 +28,14 @@ export function specHtml(config: Config, lang: Lang) {
     NUMERIC_PARAMS.filter((p) => p.group === group)
       .map((p) => `<tr><th scope="row">${t(`param.${p.key}`)}</th><td>${v[p.key]} ${unit(p.unit)}</td></tr>`)
       .join('')
-  const petals = petalCount()
   const hard = t(config.printPreset === 'fdm' ? 'spec.hardFdm' : 'spec.hardService')
   const bom: [string, number, string][] = [
-    [t('spec.bomPetal'), petals, t('spec.tpu')],
+    [t('spec.bomTile'), tiles.length, hard],
     [t('spec.bomShell'), 1, hard],
-    [t('spec.bomEar'), 2, hard],
-    [t('spec.bomNode'), buildWorn(config, { deploy: fullDeploy() }).filter((p) => p.material === 'node').length, t('spec.silicone')],
-    [t('spec.bomPad'), 2, t('spec.silicone')],
+    [t('spec.bomPin'), pins.length, hard],
   ]
   const zones = config.enabledZones
-    .map((z) => t('param.label', { name: z, unit: t(`place.${z}`) }))
+    .map((z) => t(`place.${z}`))
     .join(t('common.list'))
   const steps = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'].map((s) => `<li>${t(`spec.${s}`)}</li>`).join('')
   return `<!doctype html>
@@ -65,7 +60,7 @@ table{border-collapse:collapse;width:100%}th,td{border:1px solid #555;padding:.4
 <li>${escapeHtml(config.name)}</li>
 <li>${t('spec.generated')}: ${new Date().toLocaleString(lang === 'zh' ? 'zh-CN' : 'en')}</li>
 <li>${t(config.feedbackConfirmed ? 'spec.confirmed' : 'spec.notConfirmed')}</li>
-<li>${t('review.mass', { g: estimateSideMass(config).toFixed(0) })}</li>
+<li>${t('review.mass', { g: estimateMass().toFixed(0) })}</li>
 </ul>
 <h2>${t('spec.measurements')}</h2>
 <table><tbody>${rows('measure')}</tbody></table>
@@ -73,7 +68,7 @@ table{border-collapse:collapse;width:100%}th,td{border:1px solid #555;padding:.4
 <p>${zones}</p>
 <h2>${t('spec.print')}</h2>
 <p>${t(config.printPreset === 'fdm' ? 'struct.fdm' : 'struct.service')}</p>
-<table><tbody>${rows('petal')}${rows('rail')}${rows('fit')}</tbody></table>
+<p>${t('spec.dimensions', { w: maskParams.derived.overallWidth, h: maskParams.derived.overallHeight, d: maskParams.derived.overallDepth })}</p>
 <h2>${t('spec.bom')}</h2>
 <table>
 <thead><tr><th scope="col">${t('spec.part')}</th><th scope="col">${t('spec.qty')}</th><th scope="col">${t('spec.material')}</th></tr></thead>
@@ -90,7 +85,7 @@ table{border-collapse:collapse;width:100%}th,td{border:1px solid #555;padding:.4
 }
 
 /** rhino3dm is loaded on demand because its wasm file is large. */
-export async function rhinoFile(config: Config) {
+export async function rhinoFile() {
   const [{ default: init }, { default: wasmUrl }] = await Promise.all([
     import('rhino3dm/rhino3dm.module.js'),
     import('rhino3dm/rhino3dm.wasm?url'),
@@ -99,10 +94,9 @@ export async function rhinoFile(config: Config) {
   const doc = new rhino.File3dm()
   doc.settings().modelUnitSystem = rhino.UnitSystem.Millimeters
 
-  const deploy = fullDeploy()
   const layers = new Map<string, number>()
   const layerFor = (part: Part) => {
-    const name = part.material === 'node' ? 'nodes' : part.group
+    const name = part.group
     const existing = layers.get(name)
     if (existing !== undefined) return existing
     const layer = new rhino.Layer()
@@ -112,7 +106,7 @@ export async function rhinoFile(config: Config) {
     return index
   }
 
-  for (const part of [...buildShell(config), ...buildWorn(config, { deploy })]) {
+  for (const part of buildParts()) {
     const mesh = new rhino.Mesh()
     const { positions: p, indices: t } = part.mesh
     for (let i = 0; i < p.length; i += 3) mesh.vertices().add(p[i], p[i + 1], p[i + 2])

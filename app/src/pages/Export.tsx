@@ -27,11 +27,11 @@ export default function Export() {
   const slug = config.name.replace(/[\\/:*?"<>|\s]+/g, '-') || 'ex-sense'
 
   const items: ExportItem[] = [
-    { id: 'package', title: t('export.package'), hint: t('export.packageHint'), filename: `${slug}-models.zip`, needsValid: true, build: () => printPackage(config) },
+    { id: 'package', title: t('export.package'), hint: t('export.packageHint'), filename: `${slug}-models.zip`, needsValid: true, build: () => printPackage() },
     { id: 'config', title: t('export.config'), hint: t('export.configHint'), filename: `${slug}.json`, needsValid: false, build: () => configJson(config) },
     { id: 'spec', title: t('export.spec'), hint: t('export.specHint'), filename: `${slug}-spec.html`, needsValid: true, build: () => new Blob([specHtml(config, lang)], { type: 'text/html' }) },
     ...(config.mode === 'pro'
-      ? [{ id: 'rhino', title: t('export.rhino'), hint: t('export.rhinoHint'), filename: `${slug}.3dm`, needsValid: true, build: () => rhinoFile(config) }]
+      ? [{ id: 'rhino', title: t('export.rhino'), hint: t('export.rhinoHint'), filename: `${slug}.3dm`, needsValid: true, build: () => rhinoFile() }]
       : []),
   ]
 

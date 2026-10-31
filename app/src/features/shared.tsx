@@ -30,10 +30,6 @@ export function unitLabel(t: Translate, unit: string) {
 
 export function issueText(t: Translate, issue: Issue) {
   const args = { ...issue.args }
-  if (issue.code === 'openZone') {
-    args.zone = t(`zone.${args.zone}`)
-    if (args.part === 'upper' || args.part === 'lower') args.part = t(`part.${args.part}`)
-  }
   if (issue.code === 'range') args.unit = unitLabel(t, String(args.unit))
   return t(`issue.${issue.code}`, args)
 }

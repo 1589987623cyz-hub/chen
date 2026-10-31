@@ -10,17 +10,16 @@
 
 ### 造型方向
 
-以白底三视图（正视、右视、顶视）为唯一造型依据，之前的所有造型作废。产品由单片灰色承载板、29 片白色半透明杏仁形花瓣、双眼开口和一个菱形鼻口开口组成，不含头模。花瓣位置和整体曲面都从三视图量取，默认尺寸约高 196 mm、宽 155 mm。
+造型只以 `exsense/` 文件夹为准，之前的人台、羽瓣和花瓣方案全部作废。`exsense/SPEC.md`、`params.json`、`tiles.json`、`pins.json` 是唯一几何来源，不手调坐标，要改造型就改 `exsense/generate.py` 再重新生成。
 
-### 固定设计前提
+- 产品由 2 mm 深色壳体、110 块菱形面板和 88 根执行器销组成。
+- 总体尺寸：宽 151.6 mm，高 189.1 mm，深 67.5 mm。
+- 开口：双眼椭圆和一个圆角三角形鼻口开口。
+- 分区：forehead、centre、cheek_L、cheek_R、temple_L、temple_R、chin。
+- 扇区：以眼睛高度为中心的 8 个方向。
+- 状态：rest、space:<sector>、air、uv。SPACE 时对应扇区的面板向内移动 1.5 mm。
 
-- 面具通过双侧耳挂和发夹式底座佩戴。
-- 柔性 TPU 花瓣由细杆和软关节连接，可收拢到耳侧，并沿上、下滑轨展开。
-- 每侧有 Z1–Z10 十个区域。Z5 是遮光花瓣，不提供触觉反馈；其余区域通过硅胶触点轻压皮肤，表示障碍方向和距离。
-- 冷感或温感配合短促轻触，用于提示空气颗粒物和紫外线。
-- 佩戴状态分为 Standby、Adaptive、Full Sense。
-- 眼、鼻、口始终不被遮挡。
-- 面具只感知环境，不过滤空气，也不保护面部。
+面具只感知环境，不过滤空气，也不保护面部。
 
 ## 2. Users｜用户
 
@@ -84,53 +83,12 @@
 
 预设尺码 S/M/L 对应一组默认测量值。用户可以先选尺码，再填写实测值。
 
-### 4.2 开放区与佩戴参数
+造型参数不在网站中开放，全部在 `exsense/generate.py` 顶部修改。
 
-| 名称 | 单位 | 范围 | 模式 |
-|---|---|---|---|
-| `openZoneMargin` | mm | 5–20，默认 5 | 专业；不能低于 5 |
-| `earHookWidth` | mm | 4–10 | 专业 |
-| `earHookPadThickness` | mm | 1–4 | 专业 |
-| `foldedMaxLength` | mm | 40–90 | 专业 |
-| `foldedMaxThickness` | mm | 10–30 | 专业 |
-
-### 4.3 花瓣参数
-
-| 名称 | 单位 | 范围 | 模式 |
-|---|---|---|---|
-| `enabledZones` | 集合 | Z1–Z10 | 简单 |
-| `petalProfile` | 枚举 | slim、rounded、pointed | 简单 |
-| `petalLength` | mm | 20–90 | 专业 |
-| `petalWidth` | mm | 8–30 | 专业 |
-| `petalThickness` | mm | 0.8–2.0 | 专业 |
-| `veinDensity` | 级 | 1–5 | 专业 |
-| `cutoutRatio` | % | 0–40 | 专业 |
-| `petalColor` | 枚举或 HEX | 受打印预设限制 | 专业 |
-| `surfaceFinish` | 枚举 | matte、satin、textured | 专业 |
-| `customPetalCurve` | SVG 路径或控制点 | 须通过结构校验 | 专业 |
-
-### 4.4 滑轨、关节和触点参数
-
-| 名称 | 单位 | 范围 | 模式 |
-|---|---|---|---|
-| `railLength` | mm | 40–140 | 专业 |
-| `railCurveOffset` | mm | -15–15 | 专业 |
-| `railWidth` | mm | 2–6 | 专业 |
-| `jointCount` | 个 | 2–8 | 专业 |
-| `jointClearance` | mm | 0.2–0.6 | 专业；受打印预设限制 |
-| `nodeDiameter` | mm | 4–10 | 专业 |
-| `nodeTravel` | mm | 0.5–3.0 | 专业 |
-| `nodeOffset` | mm | -5–5 | 专业 |
-
-### 4.5 反馈参数
+### 4.2 反馈参数
 
 | 名称 | 单位 | 范围 | 默认 | 模式 |
 |---|---|---|---|---|
-| `spaceEnabled` | 布尔 | 开/关 | 开 | 简单 |
-| `airEnabled` | 布尔 | 开/关 | 开 | 简单 |
-| `uvEnabled` | 布尔 | 开/关 | 开 | 简单 |
-| `thermalCueEnabled` | 布尔 | 开/关 | 开 | 简单 |
-| `tapCueEnabled` | 布尔 | 开/关 | 开 | 简单 |
 | `pmThreshold` | µg/m³ | 15–150 | 75 | 简单 |
 | `uvThreshold` | UV 指数 | 3–11 | 6 | 简单 |
 | `hapticLevel` | 级 | 1–5 | 3 | 简单；可按区域设置 |
@@ -141,24 +99,8 @@
 | `distanceNear` | m | 0.3–1.0 | 0.5 | 专业 |
 | `pulseSlow` | Hz | 1–3 | 2 | 专业 |
 | `pulseFast` | Hz | 3–8 | 5 | 专业 |
-| `zoneMap` | 映射表 | Z1–Z10 | 方案默认值 | 专业 |
 
 约束：`distanceNear < distanceMid < distanceFar`，`pulseSlow < pulseFast`。
-
-默认映射：
-
-| 区域 | 障碍方位 |
-|---|---|
-| Z1 | 正前方，头部高度 |
-| Z2 | 斜前方，头部高度 |
-| Z3 | 斜前方，头部高度（近距离增强） |
-| Z4 | 正侧方，头部高度 |
-| Z5 | 无触觉 |
-| Z6 | 斜前方，胸部高度 |
-| Z7 | 正侧方，胸部高度 |
-| Z8 | 斜前方，腰部高度 |
-| Z9 | 正侧方，腰部高度 |
-| Z10 | 正前方，胸部至腰部高度 |
 
 ## 5. Constraints｜约束
 

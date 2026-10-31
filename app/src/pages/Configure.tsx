@@ -2,21 +2,16 @@ import { lazy, Suspense, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import {
-  DEFAULT_ZONE_MAP,
   NUMERIC_PARAMS,
-  PETAL_COLORS,
   SIZE_PRESETS,
-  TACTILE_ZONE_IDS,
-  type Direction,
-  type Height,
+  ZONE_IDS,
   type NumericKey,
   type SizePreset,
   type ZoneId,
 } from '@/domain/params'
-import { estimateSideMass, hasBlockingIssue } from '@/domain/validate'
+import { estimateMass, hasBlockingIssue } from '@/domain/validate'
 import { useConfig } from '@/features/ConfigContext'
 import { issueText, NumberField, PageTitle, Section, SelectField, SwitchField, TextField } from '@/features/shared'
-import { zoneDeploy } from '@/geometry/mask'
 import { useI18n } from '@/i18n'
 import { ViewerBoundary } from '@/scene/ViewerBoundary'
 
@@ -31,6 +26,7 @@ function SizeStep() {
   return (
     <>
       <p className="mb-4 text-muted">{t('size.lead')}</p>
+      <p className="mb-4 rounded-md border border-line bg-soft p-3">{t('size.fixedModel')}</p>
       <SelectField
         label={t('size.preset')}
         value={config.sizePreset}
@@ -61,42 +57,14 @@ function ZonesStep() {
     <>
       <p className="mb-4 text-muted">{t('zones.lead')}</p>
       <div className="grid gap-1">
-        {TACTILE_ZONE_IDS.map((zone) => (
+        {ZONE_IDS.map((zone) => (
           <SwitchField
             key={zone}
-            label={`${zone} ${t(`place.${zone}`)}`}
+            label={t(`place.${zone}`)}
             checked={config.enabledZones.includes(zone)}
             onCheckedChange={(on) => toggle(zone, on)}
           />
         ))}
-        <SwitchField
-          label={t('zones.shade')}
-          hint={t('zones.shadeHint')}
-          checked={config.shadeDeployed}
-          onCheckedChange={(shadeDeployed) => update({ shadeDeployed })}
-        />
-      </div>
-    </>
-  )
-}
-
-function StyleStep() {
-  const { t } = useI18n()
-  const { config, update } = useConfig()
-  return (
-    <>
-      <p className="mb-4 text-muted">{t('style.lead')}</p>
-      <div className="grid gap-4">
-        <SelectField label={t('style.color')} value={config.petalColor} onChange={(e) => update({ petalColor: e.target.value })}>
-          {PETAL_COLORS.map((color, i) => <option key={color} value={color}>{t(`style.color${i}`)}</option>)}
-        </SelectField>
-        <SelectField
-          label={t('style.finish')}
-          value={config.surfaceFinish}
-          onChange={(e) => update({ surfaceFinish: e.target.value as typeof config.surfaceFinish })}
-        >
-          {(['matte', 'satin', 'textured'] as const).map((f) => <option key={f} value={f}>{t(`style.${f}`)}</option>)}
-        </SelectField>
       </div>
     </>
   )
@@ -106,54 +74,6 @@ const FEEDBACK_PRESETS: Record<string, Partial<Record<NumericKey, number>>> = {
   gentle: { hapticLevel: 2, thermalLevel: 1, cueDuration: 1.5 },
   balanced: { hapticLevel: 3, thermalLevel: 2, cueDuration: 2 },
   strong: { hapticLevel: 5, thermalLevel: 3, cueDuration: 3 },
-}
-
-function ZoneMapEditor({ disabled }: { disabled: boolean }) {
-  const { t } = useI18n()
-  const { config, update } = useConfig()
-  const change = (zone: ZoneId, direction: Direction | '', height: Height | 'chestwaist' | '') => {
-    const current = config.zoneMap[zone]
-    const heights: Height[] = height === 'chestwaist' ? ['chest', 'waist'] : height ? [height] : ['head']
-    const next = direction ? { ...current, direction, heights } : null
-    update({ zoneMap: { ...config.zoneMap, [zone]: next }, feedbackConfirmed: false })
-  }
-  return (
-    <>
-      <p className="text-sm text-muted">{t('fb.mapHint')}</p>
-      {TACTILE_ZONE_IDS.map((zone) => {
-        const map = config.zoneMap[zone]
-        const height = map ? (map.heights.length > 1 ? 'chestwaist' : map.heights[0]) : ''
-        return (
-          <div key={zone} className="grid gap-3 sm:grid-cols-2">
-            <SelectField
-              label={t('fb.mapDirection', { zone })}
-              value={map?.direction ?? ''}
-              disabled={disabled}
-              onChange={(e) => change(zone, e.target.value as Direction | '', height)}
-            >
-              <option value="">{t('fb.off')}</option>
-              {(['front', 'diagonal', 'side'] as const).map((d) => <option key={d} value={d}>{t(`dir.${d}`)}</option>)}
-            </SelectField>
-            <SelectField
-              label={t('fb.mapHeight', { zone })}
-              value={height}
-              disabled={disabled || !map}
-              onChange={(e) => change(zone, map?.direction ?? '', e.target.value as Height | 'chestwaist')}
-            >
-              {(['head', 'chest', 'waist', 'chestwaist'] as const).map((h) => <option key={h} value={h}>{t(`height.${h}`)}</option>)}
-            </SelectField>
-          </div>
-        )
-      })}
-      <Button
-        variant="outline"
-        disabled={disabled}
-        onClick={() => update({ zoneMap: DEFAULT_ZONE_MAP, feedbackConfirmed: false })}
-      >
-        {t('fb.mapReset')}
-      </Button>
-    </>
-  )
 }
 
 function FeedbackStep() {
@@ -192,10 +112,10 @@ function FeedbackStep() {
           <option value="strong">{t('fb.presetStrong')}</option>
         </SelectField>
         {keysOf('feedback', 'simple').map((key) => <NumberField key={key} name={key} disabled={locked} />)}
-        {TACTILE_ZONE_IDS.filter((z) => config.enabledZones.includes(z)).map((zone) => (
+        {ZONE_IDS.filter((z) => config.enabledZones.includes(z)).map((zone) => (
           <SelectField
             key={zone}
-            label={t('zones.haptic', { zone })}
+            label={t('zones.haptic', { zone: t(`place.${zone}`) })}
             disabled={locked}
             value={config.hapticByZone[zone] ?? ''}
             onChange={(e) => {
@@ -211,14 +131,9 @@ function FeedbackStep() {
         ))}
       </Section>
       {config.mode === 'pro' && (
-        <>
-          <Section title={t('fb.distance')}>
-            {keysOf('feedback', 'pro').map((key) => <NumberField key={key} name={key} disabled={locked} />)}
-          </Section>
-          <Section title={t('fb.map')}>
-            <ZoneMapEditor disabled={locked} />
-          </Section>
-        </>
+        <Section title={t('fb.distance')}>
+          {keysOf('feedback', 'pro').map((key) => <NumberField key={key} name={key} disabled={locked} />)}
+        </Section>
       )}
       <div className="mt-6 rounded-md border border-line bg-soft p-3">
         <SwitchField
@@ -236,8 +151,6 @@ function FeedbackStep() {
 function StructureStep() {
   const { t } = useI18n()
   const { config, update } = useConfig()
-  const pick = (group: string, skip: string[] = []) =>
-    keysOf(group).filter((k) => !skip.includes(k)).map((key) => <NumberField key={key} name={key} />)
   return (
     <>
       <p className="mb-4 text-muted">{t('struct.lead')}</p>
@@ -249,24 +162,18 @@ function StructureStep() {
         <option value="fdm">{t('struct.fdm')}</option>
         <option value="service">{t('struct.service')}</option>
       </SelectField>
-      <div className="mt-6">
-        <Section title={t('struct.fit')}>{pick('fit')}</Section>
-        <Section title={t('struct.petal')}>{pick('petal')}</Section>
-        <Section title={t('struct.rail')}>{pick('rail')}</Section>
-      </div>
     </>
   )
 }
 
 function ReviewStep({ onGo }: { onGo: (step: string) => void }) {
   const { t } = useI18n()
-  const { config, issues } = useConfig()
+  const { issues } = useConfig()
   const errors = issues.filter((i) => i.severity === 'error')
   const warnings = issues.filter((i) => i.severity === 'warning')
   const stepForField = (issue: (typeof issues)[number]) => {
-    if (!issue.field) return issue.code === 'openZone' ? 'structure' : 'feedback'
-    const group = NUMERIC_PARAMS.find((p) => p.key === issue.field)!.group
-    return group === 'measure' ? 'size' : group === 'feedback' ? 'feedback' : 'structure'
+    if (!issue.field) return 'feedback'
+    return NUMERIC_PARAMS.find((p) => p.key === issue.field)!.group === 'measure' ? 'size' : 'feedback'
   }
   return (
     <div className="grid gap-4">
@@ -277,7 +184,6 @@ function ReviewStep({ onGo }: { onGo: (step: string) => void }) {
         <ul className="grid gap-2">
           {errors.map((issue, i) => {
             const step = stepForField(issue)
-            const reachable = step !== 'structure' || config.mode === 'pro'
             return (
               <li key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-danger p-3">
                 <span>
@@ -285,11 +191,9 @@ function ReviewStep({ onGo }: { onGo: (step: string) => void }) {
                     ? t('review.fieldIssue', { field: t(`param.${issue.field}`), issue: issueText(t, issue) })
                     : issueText(t, issue)}
                 </span>
-                {reachable && (
-                  <Button variant="outline" onClick={() => onGo(step)}>
-                    {t('review.goField', { step: t(`step.${step}`) })}
-                  </Button>
-                )}
+                <Button variant="outline" onClick={() => onGo(step)}>
+                  {t('review.goField', { step: t(`step.${step}`) })}
+                </Button>
               </li>
             )
           })}
@@ -303,7 +207,7 @@ function ReviewStep({ onGo }: { onGo: (step: string) => void }) {
           </ul>
         </div>
       )}
-      <p>{t('review.mass', { g: estimateSideMass(config).toFixed(0) })}</p>
+      <p>{t('review.mass', { g: estimateMass().toFixed(0) })}</p>
     </div>
   )
 }
@@ -312,7 +216,7 @@ export default function Configure() {
   const { t } = useI18n()
   const { config, role, issues, update } = useConfig()
   const steps = useMemo(
-    () => ['size', 'zones', 'style', 'feedback', ...(config.mode === 'pro' ? ['structure'] : []), 'review'],
+    () => ['size', 'zones', 'feedback', ...(config.mode === 'pro' ? ['structure'] : []), 'review'],
     [config.mode],
   )
   const [step, setStep] = useState('size')
@@ -325,7 +229,6 @@ export default function Configure() {
     requestAnimationFrame(() => heading.current?.focus())
   }
 
-  const deploy = useMemo(() => zoneDeploy(config, 'full', 'upper'), [config])
   const blocked = hasBlockingIssue(issues)
 
   return (
@@ -367,11 +270,10 @@ export default function Configure() {
         <section aria-labelledby="step-heading">
           <p className="text-sm text-muted">{t('cfg.stepOf', { n: index + 1, total: steps.length })}</p>
           <h2 id="step-heading" ref={heading} tabIndex={-1} className="mb-3 font-serif text-2xl font-semibold outline-none">
-            {t(`${current === 'size' ? 'size' : current === 'zones' ? 'zones' : current === 'style' ? 'style' : current === 'feedback' ? 'fb' : current === 'structure' ? 'struct' : 'review'}.title`)}
+            {t(`${current === 'size' ? 'size' : current === 'zones' ? 'zones' : current === 'feedback' ? 'fb' : current === 'structure' ? 'struct' : 'review'}.title`)}
           </h2>
           {current === 'size' && <SizeStep />}
           {current === 'zones' && <ZonesStep />}
-          {current === 'style' && <StyleStep />}
           {current === 'feedback' && <FeedbackStep />}
           {current === 'structure' && <StructureStep />}
           {current === 'review' && <ReviewStep onGo={go} />}
@@ -389,7 +291,7 @@ export default function Configure() {
           <div className="h-80 lg:h-[30rem]">
             <ViewerBoundary fallback={<p role="alert">{t('preview.loadFailed')}</p>}>
               <Suspense fallback={<p role="status">{t('common.loading')}</p>}>
-                <MaskViewer config={config} deploy={deploy} label={t('preview.title')} />
+                <MaskViewer config={config} label={t('preview.title')} />
               </Suspense>
             </ViewerBoundary>
           </div>

@@ -7,7 +7,14 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   resolve: {
-    alias: { '@': path.resolve(import.meta.dirname, 'src') },
+    alias: {
+      '@': path.resolve(import.meta.dirname, 'src'),
+      '@exsense': path.resolve(import.meta.dirname, '../exsense'),
+    },
+    dedupe: ['three'],
+  },
+  server: {
+    fs: { allow: ['..'] },
   },
   test: {
     environment: 'node',

@@ -35,8 +35,8 @@ npm run build
 ## 目录
 
 - `src/domain`：参数、默认值和校验规则
-- `src/geometry`：头模、花瓣、滑轨和耳部结构的几何生成
-- `src/scene`：3D 预览和反馈模拟
+- `src/geometry`：读取 `exsense/` 的数据，并生成可导出的部件
+- `src/scene`：调用 `exsense/reference/maskGeometry.js` 的 3D 预览和反馈状态
 - `src/export`：STL、3MF、JSON、规格单和 Rhino 导出
 - `src/services/repo.ts`：本地与 Supabase 数据访问
 - `src/i18n`：中文和英文文本

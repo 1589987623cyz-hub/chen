@@ -3,10 +3,6 @@ export type Vec3 = [number, number, number]
 export interface Mesh {
   positions: number[]
   indices: number[]
-  /** Optional 0–1 tint per vertex, used to shade petals in the preview. */
-  shade?: number[]
-  /** Optional 0–1 position on the preview's heat ramp, per vertex. */
-  tint?: number[]
 }
 
 export const emptyMesh = (): Mesh => ({ positions: [], indices: [] })
@@ -15,8 +11,6 @@ export function appendMesh(target: Mesh, source: Mesh) {
   const offset = target.positions.length / 3
   for (const v of source.positions) target.positions.push(v)
   for (const i of source.indices) target.indices.push(i + offset)
-  if (source.shade) (target.shade ??= []).push(...source.shade)
-  if (source.tint) (target.tint ??= []).push(...source.tint)
 }
 
 export function signedVolume(mesh: Mesh) {
@@ -32,6 +26,25 @@ export function signedVolume(mesh: Mesh) {
       p[a + 2] * (p[b] * p[c + 1] - p[b + 1] * p[c])
   }
   return sum / 6
+}
+
+/** Merges coincident vertices, so a mesh built from separate faces becomes one watertight shell. */
+export function weld(mesh: Mesh, tolerance = 1e-4): Mesh {
+  const ids = new Map<string, number>()
+  const out = emptyMesh()
+  const remap: number[] = []
+  for (let i = 0; i < mesh.positions.length; i += 3) {
+    const key = [0, 1, 2].map((k) => Math.round(mesh.positions[i + k] / tolerance)).join()
+    let id = ids.get(key)
+    if (id === undefined) {
+      id = ids.size
+      ids.set(key, id)
+      out.positions.push(mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2])
+    }
+    remap.push(id)
+  }
+  for (const index of mesh.indices) out.indices.push(remap[index])
+  return out
 }
 
 /** Makes triangle normals face outward, as slicers expect. */
@@ -52,10 +65,8 @@ export function solidGrid(
   nv: number,
   keep: (i: number, j: number) => boolean,
   point: (i: number, j: number, layer: 0 | 1) => Vec3,
-  shade?: (i: number, j: number) => number,
 ): Mesh {
   const mesh = emptyMesh()
-  if (shade) mesh.shade = []
   const ids = new Map<number, number>()
   const vertex = (i: number, j: number, layer: 0 | 1) => {
     const key = (i * (nv + 1) + j) * 2 + layer
@@ -64,7 +75,6 @@ export function solidGrid(
       id = ids.size
       ids.set(key, id)
       mesh.positions.push(...point(i, j, layer))
-      if (shade) mesh.shade!.push(shade(i, j))
     }
     return id
   }

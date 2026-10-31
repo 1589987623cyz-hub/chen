@@ -64,7 +64,6 @@ language sql immutable as $$
   select jsonb_build_object(
     'cues', data -> 'cues',
     'hapticByZone', data -> 'hapticByZone',
-    'zoneMap', data -> 'zoneMap',
     'feedbackConfirmed', data -> 'feedbackConfirmed',
     'values', jsonb_build_object(
       'pmThreshold', data #> '{values,pmThreshold}',

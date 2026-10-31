@@ -28,4 +28,4 @@ npm test
 npm run build
 ```
 
-面具造型定义在 `app/src/geometry/mask.ts`，所有花瓣和开口的坐标都来自产品三视图。
+面具造型只来自 `exsense/`：读 `exsense/SPEC.md`，要改造型就改 `exsense/generate.py` 再运行。不要在网站代码里手调坐标。

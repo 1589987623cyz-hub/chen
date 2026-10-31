@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { NUMERIC_PARAMS, ZONE_IDS } from '@/domain/params'
+import { NUMERIC_PARAMS, SECTORS, ZONE_IDS } from '@/domain/params'
 import { en, zh } from './messages'
 
 function sources(dir: string): string[] {
@@ -31,11 +31,10 @@ describe('translations', () => {
     const keys = [
       ...NUMERIC_PARAMS.map((p) => `param.${p.key}`),
       ...ZONE_IDS.map((z) => `place.${z}`),
-      ...['size', 'zones', 'style', 'feedback', 'structure', 'review'].map((s) => `step.${s}`),
-      ...['standby', 'adaptive', 'full'].map((s) => `state.${s}`),
-      ...['upper', 'middle', 'lower'].map((r) => `region.${r}`),
-      ...['front', 'diagonal', 'side'].map((d) => `dir.${d}`),
-      ...['head', 'chest', 'waist', 'chestwaist'].map((h) => `height.${h}`),
+      ...SECTORS.map((s) => `sector.${s}`),
+      ...['size', 'zones', 'feedback', 'structure', 'review'].map((s) => `step.${s}`),
+      ...['rest', 'space', 'air', 'uv'].map((m) => `mode.${m}`),
+      ...['front', 'side', 'back', 'top', 'angle'].map((v) => `view.${v}`),
       ...['space', 'air', 'uv', 'thermal', 'tap'].map((c) => `cue.${c}`),
       ...['pending', 'active'].map((s) => `collab.${s}`),
     ]
