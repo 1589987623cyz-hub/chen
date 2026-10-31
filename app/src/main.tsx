@@ -9,7 +9,7 @@ import { Accessibility, Auth, Dashboard, Home, Invite, Settings } from '@/pages/
 import Collaborators from '@/pages/Collaborators'
 import Configure from '@/pages/Configure'
 import Export from '@/pages/Export'
-import Preview from '@/pages/Preview'
+import Preview, { SharedPreview } from '@/pages/Preview'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -27,6 +27,7 @@ createRoot(document.getElementById('root')!).render(
                 <Route path="export" element={<Export />} />
                 <Route path="collaborators" element={<Collaborators />} />
               </Route>
+              <Route path="view/:id" element={<SharedPreview />} />
               <Route path="invite/:token" element={<Invite />} />
               <Route path="settings" element={<Settings />} />
               <Route path="accessibility" element={<Accessibility />} />

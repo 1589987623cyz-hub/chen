@@ -41,14 +41,20 @@ export async function getSession(): Promise<Session | null> {
   return data.session
 }
 
+/** Signed-out visitors keep working in this browser, so the site never requires an account. */
+async function cloud() {
+  return supabase && (await getSession()) ? supabase : null
+}
+
 export async function listConfigs(): Promise<ConfigSummary[]> {
-  if (!supabase) {
+  const db = await cloud()
+  if (!db) {
     return Object.values(readLocal())
       .map((c) => ({ id: c.id, name: c.name, updatedAt: c.updatedAt, role: 'owner' as const }))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
   }
   const session = await getSession()
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('configurations')
     .select('id, name, updated_at, owner_id')
     .order('updated_at', { ascending: false })
@@ -62,12 +68,13 @@ export async function listConfigs(): Promise<ConfigSummary[]> {
 }
 
 export async function loadConfig(id: string): Promise<{ config: Config; role: Role } | null> {
-  if (!supabase) {
+  const db = await cloud()
+  if (!db) {
     const config = readLocal()[id]
     return config ? { config: parseConfig(JSON.stringify(config)), role: 'owner' } : null
   }
   const session = await getSession()
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('configurations')
     .select('owner_id, configuration_versions(data, version)')
     .eq('id', id)
@@ -86,7 +93,8 @@ export async function loadConfig(id: string): Promise<{ config: Config; role: Ro
 /** Saves a new immutable version. The database rejects helper edits to feedback fields too. */
 export async function saveConfig(config: Config, role: Role = 'owner', previous?: Config) {
   const next = { ...config, updatedAt: new Date().toISOString() }
-  if (!supabase) {
+  const db = await cloud()
+  if (!db) {
     writeLocal({ ...readLocal(), [next.id]: next })
     return next
   }
@@ -94,7 +102,7 @@ export async function saveConfig(config: Config, role: Role = 'owner', previous?
     const guarded = JSON.stringify(feedbackFields(previous)) !== JSON.stringify(feedbackFields(next))
     if (guarded) throw new Error('feedback fields are owner-only')
   }
-  const { error } = await supabase.rpc('save_configuration', {
+  const { error } = await db.rpc('save_configuration', {
     p_id: next.id,
     p_name: next.name,
     p_data: next,
@@ -104,24 +112,26 @@ export async function saveConfig(config: Config, role: Role = 'owner', previous?
 }
 
 export async function deleteConfig(id: string) {
-  if (!supabase) {
+  const db = await cloud()
+  if (!db) {
     const all = readLocal()
     delete all[id]
     writeLocal(all)
     return
   }
-  const { error } = await supabase.from('configurations').delete().eq('id', id)
+  const { error } = await db.from('configurations').delete().eq('id', id)
   if (error) throw error
 }
 
 export async function deleteAllData() {
-  if (!supabase) {
+  const db = await cloud()
+  if (!db) {
     writeLocal({})
     return
   }
-  const { error } = await supabase.rpc('delete_my_data')
+  const { error } = await db.rpc('delete_my_data')
   if (error) throw error
-  await supabase.auth.signOut()
+  await db.auth.signOut()
 }
 
 export async function exportAllData() {
@@ -130,6 +140,32 @@ export async function exportAllData() {
     summaries.filter((s) => s.role === 'owner').map((s) => loadConfig(s.id)),
   )
   return loaded.flatMap((item) => (item ? [item.config] : []))
+}
+
+/** Null when this configuration is not in the signed-in owner's cloud storage. */
+export async function getSharing(id: string): Promise<boolean | null> {
+  const db = await cloud()
+  if (!db) return null
+  const { data, error } = await db.from('configurations').select('shared').eq('id', id).maybeSingle()
+  if (error) throw error
+  return data?.shared ?? null
+}
+
+export async function setSharing(id: string, shared: boolean) {
+  const db = await cloud()
+  if (!db) throw new Error('cloud required')
+  const { error } = await db.rpc('set_configuration_shared', { p_id: id, p_shared: shared })
+  if (error) throw error
+}
+
+export const shareLink = (id: string) => `${location.origin}${import.meta.env.BASE_URL}view/${id}`
+
+/** Read-only and available without an account. The database leaves out measurements. */
+export async function loadShared(id: string): Promise<Config | null> {
+  if (!supabase) return null
+  const { data, error } = await supabase.rpc('get_shared_configuration', { p_id: id })
+  if (error) throw error
+  return data ? parseConfig(JSON.stringify(data)) : null
 }
 
 export async function listCollaborators(configId: string): Promise<Collaborator[]> {

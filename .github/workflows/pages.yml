@@ -32,6 +32,8 @@ jobs:
       - run: npm run build
         env:
           SITE_BASE: /${{ github.event.repository.name }}/
+          VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
       # Pages has no server-side routing, so unknown paths fall back to the app itself.
       - run: cp dist/index.html dist/404.html
       - uses: actions/upload-pages-artifact@v3

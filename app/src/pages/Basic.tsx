@@ -55,7 +55,7 @@ export function Auth() {
       kind === 'signIn'
         ? await supabase.auth.signInWithPassword({ email, password })
         : kind === 'signUp'
-          ? await supabase.auth.signUp({ email, password })
+          ? await supabase.auth.signUp({ email, password, options: { emailRedirectTo: `${location.origin}${import.meta.env.BASE_URL}` } })
           : await supabase.auth.resetPasswordForEmail(email)
     if (result.error) setMessage(t('auth.failed', { message: result.error.message }))
     else if (kind === 'signIn') navigate(new URLSearchParams(location.search).get('next') ?? '/dashboard')
@@ -91,12 +91,8 @@ export function Dashboard() {
   const file = useRef<HTMLInputElement>(null)
 
   const refresh = useCallback(async () => {
-    if (cloudEnabled && !(await getSession())) {
-      navigate('/auth?next=/dashboard')
-      return
-    }
     setItems(await listConfigs())
-  }, [navigate])
+  }, [])
 
   useEffect(() => {
     refresh().catch(() => setItems([]))

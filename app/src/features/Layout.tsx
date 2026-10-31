@@ -92,7 +92,7 @@ export function Layout() {
           </nav>
         </div>
       </header>
-      {!cloudEnabled && (
+      {!signedIn && !pathname.startsWith('/view/') && (
         <p className="bg-soft px-4 py-2 text-center text-sm">{t('common.localMode')}</p>
       )}
       <main id="main" key={pathname} className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">

@@ -219,6 +219,23 @@ describe('configuration', () => {
     expect(validate(c).some((i) => i.code === 'distanceOrder')).toBe(true)
   })
 
+  it('opens a shared configuration, which arrives without measurements', () => {
+    const shared = {
+      schemaVersion: 2,
+      id: 'shared',
+      name: 'Shared',
+      updatedAt: '2026-10-31T00:00:00Z',
+      enabledZones: ['forehead'],
+      cues: { thermal: false },
+      values: { pmThreshold: 50 },
+    }
+    const parsed = parseConfig(JSON.stringify(shared))
+    expect(parsed.enabledZones).toEqual(['forehead'])
+    expect(parsed.values.pmThreshold).toBe(50)
+    expect(parsed.values.pupilDistance).toBe(config().values.pupilDistance)
+    expect(parsed.cues).toMatchObject({ thermal: false, tap: true })
+  })
+
   it('migrates a configuration saved for the old model', () => {
     const old = {
       schemaVersion: 1,

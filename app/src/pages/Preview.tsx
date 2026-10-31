@@ -1,7 +1,7 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { lazy, Suspense, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Link, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import { SECTORS, ZONE_IDS, type Sector, type ZoneId } from '@/domain/params'
+import { SECTORS, ZONE_IDS, type Config, type Sector, type ZoneId } from '@/domain/params'
 import { hasBlockingIssue } from '@/domain/validate'
 import { useConfig } from '@/features/ConfigContext'
 import { PageTitle, SelectField, SwitchField, TextField } from '@/features/shared'
@@ -9,6 +9,7 @@ import { contacts, maskParams, pins, sensors, tiles } from '@/geometry/mask'
 import { useI18n, type Translate } from '@/i18n'
 import { resolveSimulation, type Simulation, type SimulationKind, type SimulationResult } from '@/scene/feedback'
 import { ViewerBoundary } from '@/scene/ViewerBoundary'
+import { cloudEnabled, getSharing, loadShared, setSharing, shareLink } from '@/services/repo'
 
 const MaskViewer = lazy(() => import('@/scene/MaskViewer'))
 
@@ -30,9 +31,91 @@ function describe(t: Translate, sim: Simulation, result: SimulationResult, cue: 
   })
 }
 
+function ShareControl({ id }: { id: string }) {
+  const { t } = useI18n()
+  const [shared, setShared] = useState<boolean | null | 'loading'>('loading')
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    getSharing(id).then(setShared).catch(() => setShared(null))
+  }, [id])
+
+  if (!cloudEnabled) return <p className="text-sm text-muted">{t('share.needCloud')}</p>
+  if (shared === 'loading') return null
+  if (shared === null) {
+    return <p className="text-sm"><Link to="/auth" className="underline">{t('share.needSignIn')}</Link></p>
+  }
+  return (
+    <section aria-labelledby="share-title" className="grid gap-3 rounded-md border border-line p-3">
+      <h2 id="share-title" className="font-semibold">{t('share.title')}</h2>
+      <SwitchField
+        label={t('share.switch')}
+        checked={shared}
+        onCheckedChange={async (next) => {
+          try {
+            await setSharing(id, next)
+            setShared(next)
+            setMessage('')
+          } catch {
+            setMessage(t('share.failed'))
+          }
+        }}
+      />
+      <p className="text-sm text-muted">{t('share.hint')}</p>
+      {shared && (
+        <>
+          <p className="break-all">{shareLink(id)}</p>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              await navigator.clipboard.writeText(shareLink(id))
+              setMessage(t('share.copied'))
+            }}
+          >
+            {t('collab.copy')}
+          </Button>
+        </>
+      )}
+      <p role="status" className="min-h-6">{message}</p>
+    </section>
+  )
+}
+
 export default function Preview() {
   const { t } = useI18n()
-  const { config, issues } = useConfig()
+  const { config, issues, role } = useConfig()
+  return (
+    <PreviewView
+      config={config}
+      title={t('preview.title')}
+      intro={<Link to=".." relative="path" className="underline">{t('common.back')}</Link>}
+    >
+      {role === 'owner' && <ShareControl id={config.id} />}
+      {!hasBlockingIssue(issues) && (
+        <Button asChild><Link to="../export" relative="path">{t('cfg.toExport')}</Link></Button>
+      )}
+    </PreviewView>
+  )
+}
+
+/** The read-only page behind a public link. Every load fetches the latest saved version. */
+export function SharedPreview() {
+  const { t, lang } = useI18n()
+  const { id = '' } = useParams()
+  const [config, setConfig] = useState<Config | null | 'loading'>('loading')
+
+  useEffect(() => {
+    loadShared(id).then(setConfig).catch(() => setConfig(null))
+  }, [id])
+
+  if (config === 'loading') return <p role="status">{t('common.loading')}</p>
+  if (!config) return <p role="alert">{t('shared.missing')}</p>
+  const date = new Date(config.updatedAt).toLocaleString(lang === 'zh' ? 'zh-CN' : 'en')
+  return <PreviewView config={config} title={config.name} intro={t('shared.intro', { date })} />
+}
+
+function PreviewView({ config, title, intro, children }: { config: Config; title: string; intro: ReactNode; children?: ReactNode }) {
+  const { t } = useI18n()
   const [zone, setZone] = useState<ZoneId | ''>('')
   const [showOpen, setShowOpen] = useState(false)
   const [view, setView] = useState<ViewName>('front')
@@ -63,10 +146,8 @@ export default function Preview() {
 
   return (
     <div>
-      <PageTitle>{t('preview.title')}</PageTitle>
-      <p className="mt-1 mb-4">
-        <Link to=".." relative="path" className="underline">{t('common.back')}</Link>
-      </p>
+      <PageTitle>{title}</PageTitle>
+      <p className="mt-1 mb-4">{intro}</p>
 
       <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
         <div className="lg:sticky lg:top-4">
@@ -152,9 +233,7 @@ export default function Preview() {
             </div>
           </section>
 
-          {!hasBlockingIssue(issues) && (
-            <Button asChild><Link to="../export" relative="path">{t('cfg.toExport')}</Link></Button>
-          )}
+          {children}
         </div>
       </div>
     </div>
