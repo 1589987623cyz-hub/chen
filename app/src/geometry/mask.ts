@@ -1,12 +1,14 @@
 import * as THREE from 'three'
+import contactsJson from '@exsense/contacts.json'
 import params from '@exsense/params.json'
 import pinsJson from '@exsense/pins.json'
-import { buildTileGeometry, makeShell } from '@exsense/reference/maskGeometry.js'
+import { buildContactGeometry, buildSensorGeometry, buildTileGeometry, holeDistance, makeShell } from '@exsense/reference/maskGeometry.js'
+import sensorsJson from '@exsense/sensors.json'
 import tilesJson from '@exsense/tiles.json'
 import type { Sector, ZoneId } from '@/domain/params'
 import { solidGrid, tube, weld, type Mesh, type Vec3 } from './mesh'
 
-export type PartGroup = 'tiles' | 'shell' | 'pins'
+export type PartGroup = 'tiles' | 'shell' | 'pins' | 'sensors' | 'contacts'
 
 export interface Part {
   name: string
@@ -39,10 +41,37 @@ export interface Pin {
   uv: Point
 }
 
+export interface Sensor {
+  id: string
+  kind: 'space' | 'uv' | 'air'
+  name: string
+  uv: Point
+  p2D: Point
+  base3D: Vec3
+  normal: Vec3
+  facingDeg: number
+}
+
+export interface Contact {
+  id: string
+  tile: string
+  uv: Point
+  sector: Sector
+  zone: ZoneId
+  base3D: Vec3
+  axis: Vec3
+  length: number
+  padRadius: number
+  thermal: boolean
+  reach: number
+}
+
 // All geometry comes from the generated files. To change the shape, edit exsense/generate.py.
 export const maskParams = params
 export const tiles = tilesJson.tiles as unknown as Tile[]
 export const pins = pinsJson.pins as unknown as Pin[]
+export const sensors = sensorsJson.sensors as unknown as Sensor[]
+export const contacts = contactsJson.contacts as unknown as Contact[]
 export const shell = makeShell(params)
 
 export function geometryToMesh(geometry: THREE.BufferGeometry): Mesh {
@@ -53,6 +82,8 @@ export function geometryToMesh(geometry: THREE.BufferGeometry): Mesh {
 }
 
 export const tileMesh = (tile: Tile) => geometryToMesh(buildTileGeometry(tile, params, shell))
+export const contactMesh = (contact: Contact) => geometryToMesh(buildContactGeometry(contact, params))
+export const sensorMesh = (sensor: Sensor) => geometryToMesh(buildSensorGeometry(sensor, params).collar)
 
 export const insidePolygon = (points: Point[], x: number, y: number) => {
   let inside = false
@@ -74,6 +105,7 @@ export const polygonArea = (points: Point[]) =>
 
 const openings = Object.values(params.outlines.openingsUV) as Point[][]
 export const openingOutlines = openings
+const holes = params.outlines.holesUV as [number, number, number, number, number][]
 
 /** A printable solid of the shell. The preview cuts the same outline with an alpha map instead. */
 export function shellMesh(nu = 260, nv = 320): Mesh {
@@ -87,7 +119,9 @@ export function shellMesh(nu = 260, nv = 320): Mesh {
     for (let j = 0; j < nv; j++) {
       const u = uAt(i + 0.5)
       const v = vAt(j + 0.5)
-      filled[i].push(insidePolygon(trim, u, v) && !openings.some((o) => insidePolygon(o, u, v)))
+      filled[i].push(
+        insidePolygon(trim, u, v) && !openings.some((o) => insidePolygon(o, u, v)) && !holes.some((h) => holeDistance(u, v, h) < 0),
+      )
     }
   }
   // Cells that touch only at a corner would make the printed part non-manifold.
@@ -119,6 +153,8 @@ export function buildParts(): Part[] {
     { name: 'shell', group: 'shell', mesh: shellMesh() },
     ...tiles.map((tile): Part => ({ name: tile.id, group: 'tiles', mesh: tileMesh(tile) })),
     ...pins.map((pin): Part => ({ name: pin.id, group: 'pins', mesh: pinMesh(pin) })),
+    ...sensors.map((sensor): Part => ({ name: sensor.id, group: 'sensors', mesh: sensorMesh(sensor) })),
+    ...contacts.map((contact): Part => ({ name: contact.id, group: 'contacts', mesh: contactMesh(contact) })),
   ]
 }
 

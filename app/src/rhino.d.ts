@@ -10,6 +10,15 @@ declare module '@exsense/reference/maskGeometry.js' {
   }
   export function makeShell(params: unknown): ShellSurface
   export function buildTileGeometry(tile: unknown, params: unknown, shell: ShellSurface): BufferGeometry
-  export function buildMask(params: unknown, tiles: unknown, pins: unknown): { root: Group; shell: ShellSurface }
+  export function buildContactGeometry(contact: unknown, params: unknown): BufferGeometry
+  export function buildSensorGeometry(sensor: unknown, params: unknown): { collar: BufferGeometry; lens: BufferGeometry }
+  export function holeDistance(u: number, v: number, hole: [number, number, number, number, number]): number
+  export function buildMask(
+    params: unknown,
+    tiles: unknown,
+    pins: unknown,
+    sensors: unknown,
+    contacts: unknown,
+  ): { root: Group; shell: ShellSurface }
   export function setTileTravel(mesh: Mesh, mm: number): void
 }

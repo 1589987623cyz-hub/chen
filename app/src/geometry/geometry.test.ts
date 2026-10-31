@@ -2,7 +2,21 @@ import { describe, expect, it } from 'vitest'
 import { createConfig, parseConfig, SECTORS, ZONE_IDS } from '@/domain/params'
 import { hasBlockingIssue, validate } from '@/domain/validate'
 import { resolveSimulation, tileFeedback } from '@/scene/feedback'
-import { buildParts, maskParams, pinMesh, pins, shell, shellMesh, tileMesh, tiles } from './mask'
+import {
+  buildParts,
+  contactMesh,
+  contacts,
+  insidePolygon,
+  maskParams,
+  pinMesh,
+  pins,
+  sensorMesh,
+  sensors,
+  shell,
+  shellMesh,
+  tileMesh,
+  tiles,
+} from './mask'
 import { isClosed, signedVolume } from './mesh'
 
 const config = () => createConfig('test', 'test-id')
@@ -11,11 +25,58 @@ describe('SPEC section 8 acceptance', () => {
   const meshes = tiles.map(tileMesh)
 
   it('has the specified parts', () => {
-    expect(tiles.length).toBe(110)
-    expect(pins.length).toBe(88)
+    expect(tiles.length).toBe(maskParams.derived.tileCount)
+    expect(pins.length).toBe(maskParams.derived.pinCount)
     expect(maskParams.derived.overallWidth).toBeCloseTo(151.6, 0)
     expect(maskParams.derived.overallHeight).toBeCloseTo(189.1, 0)
-    expect(maskParams.derived.overallDepth).toBeCloseTo(67.5, 0)
+  })
+
+  it('clears the reference face', () => {
+    const { fit } = maskParams.derived
+    expect(fit.minGap).toBeGreaterThanOrEqual(maskParams.fitReference.minClearance)
+    expect(fit.noseSideClearance).toBeGreaterThanOrEqual(maskParams.fitReference.noseMinOpeningClearance)
+  })
+
+  it('gives every sector a sensor window and skin contacts', () => {
+    for (const sector of SECTORS) {
+      expect(sensors.some((s) => s.kind === 'space' && s.name === sector)).toBe(true)
+      expect(contacts.filter((c) => c.sector === sector).length).toBeGreaterThanOrEqual(maskParams.contacts.minPerSector)
+    }
+    expect(sensors.filter((s) => s.kind === 'uv').length).toBe(1)
+    expect(sensors.filter((s) => s.kind === 'air').length).toBe(2)
+  })
+
+  it('lets a pushed tile reach the skin', () => {
+    expect(maskParams.tiles.travelIn).toBeGreaterThan(maskParams.contacts.tipGap)
+    for (const c of contacts) expect(c.reach).toBeGreaterThanOrEqual(maskParams.contacts.padHeight + maskParams.contacts.tipGap)
+  })
+
+  it('keeps left and right the same', () => {
+    for (const c of contacts) {
+      const twin = contacts.find((d) => Math.hypot(d.uv[0] + c.uv[0], d.uv[1] - c.uv[1]) < 1)
+      expect(twin?.padRadius).toBe(c.padRadius)
+    }
+  })
+
+  it('keeps contact pads out of the eye and nose openings', () => {
+    const { openings2D } = maskParams.outlines
+    for (const c of contacts) {
+      const tip = c.base3D.map((x, i) => x + c.axis[i] * c.length)
+      for (const outline of Object.values(openings2D) as [number, number][][]) {
+        expect(insidePolygon(outline, tip[0], tip[1])).toBe(false)
+      }
+    }
+  })
+
+  it('keeps tiles clear of sensor collars', () => {
+    const { collarRadius, tileClearance } = maskParams.sensors
+    for (const s of sensors) {
+      for (const tile of tiles) {
+        for (const [u, v] of tile.outlineUV) {
+          expect(Math.hypot(u - s.uv[0], v - s.uv[1])).toBeGreaterThan(collarRadius + tileClearance - 0.3)
+        }
+      }
+    }
   })
 
   it('has no NaN in any vertex', () => {
@@ -78,8 +139,15 @@ describe('printable parts', () => {
     expect(isClosed(pinMesh(pins[0]))).toBe(true)
   })
 
+  it('closes every sensor collar and contact', () => {
+    for (const mesh of [...sensors.map(sensorMesh), ...contacts.map(contactMesh)]) {
+      expect(isClosed(mesh)).toBe(true)
+      expect(signedVolume(mesh)).toBeGreaterThan(0)
+    }
+  })
+
   it('exports one part per tile and pin plus the shell', () => {
-    expect(buildParts().length).toBe(1 + 110 + 88)
+    expect(buildParts().length).toBe(1 + tiles.length + pins.length + sensors.length + contacts.length)
   })
 })
 

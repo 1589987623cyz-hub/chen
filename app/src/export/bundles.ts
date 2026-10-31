@@ -1,6 +1,6 @@
 import { NUMERIC_PARAMS, type Config } from '@/domain/params'
 import { estimateMass } from '@/domain/validate'
-import { buildParts, maskParams, pins, tiles, type Part } from '@/geometry/mask'
+import { buildParts, contacts, maskParams, pins, sensors, tiles, type Part } from '@/geometry/mask'
 import { translate, type Lang } from '@/i18n'
 import { stlBinary, threeMf, zip, type ZipEntry } from './files'
 
@@ -33,6 +33,8 @@ export function specHtml(config: Config, lang: Lang) {
     [t('spec.bomTile'), tiles.length, hard],
     [t('spec.bomShell'), 1, hard],
     [t('spec.bomPin'), pins.length, hard],
+    [t('spec.bomSensor'), sensors.length, hard],
+    [t('spec.bomContact'), contacts.length, t('spec.soft')],
   ]
   const zones = config.enabledZones
     .map((z) => t(`place.${z}`))

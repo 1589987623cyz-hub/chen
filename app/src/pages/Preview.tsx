@@ -5,7 +5,7 @@ import { SECTORS, ZONE_IDS, type Sector, type ZoneId } from '@/domain/params'
 import { hasBlockingIssue } from '@/domain/validate'
 import { useConfig } from '@/features/ConfigContext'
 import { PageTitle, SelectField, SwitchField, TextField } from '@/features/shared'
-import { maskParams, pins, tiles } from '@/geometry/mask'
+import { contacts, maskParams, pins, sensors, tiles } from '@/geometry/mask'
 import { useI18n, type Translate } from '@/i18n'
 import { resolveSimulation, type Simulation, type SimulationKind, type SimulationResult } from '@/scene/feedback'
 import { ViewerBoundary } from '@/scene/ViewerBoundary'
@@ -53,7 +53,13 @@ export default function Preview() {
     return t(cool ? 'sim.tap2' : 'sim.tap1')
   }
   const outcome = describe(t, sim, result, cue)
-  const summary = t('desc.base', { tiles: tiles.length, pins: pins.length, state: t(`mode.${sim.kind}`) })
+  const summary = t('desc.base', {
+    tiles: tiles.length,
+    pins: pins.length,
+    sensors: sensors.length,
+    contacts: contacts.length,
+    state: t(`mode.${sim.kind}`),
+  })
 
   return (
     <div>

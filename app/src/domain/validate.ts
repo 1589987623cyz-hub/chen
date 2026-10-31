@@ -1,4 +1,4 @@
-import { maskParams, openingOutlines, pins, polygonArea, tiles } from '@/geometry/mask'
+import { contacts, maskParams, openingOutlines, pins, polygonArea, sensors, tiles } from '@/geometry/mask'
 import { NUMERIC_PARAMS, type Config, type NumericKey } from './params'
 
 export interface Issue {
@@ -49,7 +49,13 @@ export function estimateMass() {
   const open = openingOutlines.reduce((sum, outline) => sum + polygonArea(outline), 0)
   const shellVolume = (trimmed - open) * maskParams.shell.thickness
   const pinVolume = pins.length * Math.PI * maskParams.pins.radius ** 2 * maskParams.pins.height
-  return ((tileVolume + shellVolume + pinVolume) * PRINT_DENSITY) / 1000
+  const { collarRadius, collarTop, backOffset } = maskParams.sensors
+  const sensorVolume = sensors.length * Math.PI * collarRadius ** 2 * (collarTop - backOffset)
+  const contactVolume = contacts.reduce((sum, c) => {
+    const { stemRadius, padHeight } = maskParams.contacts
+    return sum + Math.PI * (stemRadius ** 2 * c.length + c.padRadius ** 2 * padHeight)
+  }, 0)
+  return ((tileVolume + shellVolume + pinVolume + sensorVolume + contactVolume) * PRINT_DENSITY) / 1000
 }
 
 export const hasBlockingIssue = (issues: Issue[]) => issues.some((i) => i.severity === 'error')

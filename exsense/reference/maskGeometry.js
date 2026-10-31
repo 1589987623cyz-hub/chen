@@ -12,9 +12,15 @@ export function makeShell(params) {
   const S = params.shell, R = THREE.MathUtils.degToRad;
   const a = S.a_halfWidth, b = S.b_halfHeight, c = S.c_depth;
   const taper = (phi) => 1 - S.chinTaper * Math.pow(Math.max(0, -Math.sin(phi)), S.chinTaperExp);
+  const profile = (phi) => {
+    const y = b * Math.sin(phi);
+    return y >= 0
+      ? -S.foreheadBack * Math.pow(y / S.profileTopY, S.profileExp)
+      : -S.chinBack * Math.pow(-y / S.profileBottomY, S.profileExp);
+  };
   const shellAt = (theta, phi, out = new THREE.Vector3()) => {
     const k = taper(phi);
-    return out.set(a * k * Math.sin(theta) * Math.cos(phi), b * Math.sin(phi), c * Math.cos(theta) * Math.cos(phi) - c);
+    return out.set(a * k * Math.sin(theta) * Math.cos(phi), b * Math.sin(phi), c * (Math.cos(theta) - 1) * Math.cos(phi) + profile(phi));
   };
   const _p = new THREE.Vector3(), _t = new THREE.Vector3(), _f = new THREE.Vector3();
   const normalAt = (theta, phi, out = new THREE.Vector3()) => {
@@ -35,6 +41,20 @@ export function makeShell(params) {
     a, b, shellAt, normalAt, uvTo3D, uvNormal,
     thetaMax: R(S.thetaMax_deg), phiMin: R(S.phiMin_deg), phiMax: R(S.phiMax_deg),
   };
+}
+
+// ------------------------------------------------------------------ holes through the shell: capsules [U0, V0, U1, V1, r]
+export function holeDistance(u, v, [u0, v0, u1, v1, r]) {
+  const du = u1 - u0, dv = v1 - v0, l2 = du * du + dv * dv;
+  const t = l2 ? Math.min(1, Math.max(0, ((u - u0) * du + (v - v0) * dv) / l2)) : 0;
+  return Math.hypot(u - (u0 + t * du), v - (v0 + t * dv)) - r;
+}
+
+export function holeOutline([u0, v0, u1, v1, r], n = 24) {
+  const a = (u0 === u1 && v0 === v1 ? 0 : Math.atan2(v1 - v0, u1 - u0)) + Math.PI / 2, pts = [];
+  const arc = (cu, cv, start) => { for (let k = 0; k <= n; k++) { const t = start + (Math.PI * k) / n; pts.push([cu + r * Math.cos(t), cv + r * Math.sin(t)]); } };
+  arc(u0, v0, a); arc(u1, v1, a + Math.PI);
+  return pts;
 }
 
 // ------------------------------------------------------------------ shell mesh (dark base)
@@ -71,6 +91,7 @@ export function buildShellMesh(params, shell, material) {
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, size, size);
   fill(params.outlines.trimUV, '#fff');
   for (const poly of Object.values(params.outlines.openingsUV)) fill(poly, '#000');
+  for (const hole of params.outlines.holesUV) fill(holeOutline(hole), '#000');
   const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.NoColorSpace; tex.anisotropy = 8;
 
   const mat = material ?? new THREE.MeshStandardMaterial({ color: 0x1e1e1e, roughness: 0.7, metalness: 0.1 });
@@ -144,12 +165,74 @@ export function buildPins(pinsJson, params, material) {
   return inst;
 }
 
+// ------------------------------------------------------------------ turned parts: closed solids around an axis
+// profile = [[radius, height], ...], starting and ending on the axis (radius 0)
+function revolve(profile, origin, axis, sides = 24) {
+  const n = new THREE.Vector3(...axis), e1 = new THREE.Vector3(), e2 = new THREE.Vector3();
+  e1.set(Math.abs(n.x) < 0.9 ? 1 : 0, Math.abs(n.x) < 0.9 ? 0 : 1, 0).cross(n).normalize(); e2.crossVectors(n, e1);
+  const o = new THREE.Vector3(...origin), pos = [], idx = [], q = new THREE.Vector3();
+  const rings = profile.slice(1, -1), ringAt = (i, k) => 1 + i * sides + ((k + sides) % sides);
+  const vertex = (r, h, a) => { q.copy(o).addScaledVector(n, h).addScaledVector(e1, r * Math.cos(a)).addScaledVector(e2, r * Math.sin(a)); pos.push(q.x, q.y, q.z); };
+  vertex(0, profile[0][1], 0);
+  rings.forEach(([r, h]) => { for (let k = 0; k < sides; k++) vertex(r, h, (2 * Math.PI * k) / sides); });
+  vertex(0, profile[profile.length - 1][1], 0);
+  const top = pos.length / 3 - 1, last = rings.length - 1;
+  for (let k = 0; k < sides; k++) {
+    idx.push(0, ringAt(0, k + 1), ringAt(0, k), top, ringAt(last, k), ringAt(last, k + 1));
+    for (let i = 0; i < last; i++) idx.push(ringAt(i, k), ringAt(i, k + 1), ringAt(i + 1, k + 1), ringAt(i, k), ringAt(i + 1, k + 1), ringAt(i + 1, k));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  return g;
+}
+
+// A stem from the tile through the shell, ending in a soft domed pad. Starts at the tile underside.
+export function buildContactGeometry(contact, params) {
+  const C = params.contacts, L = contact.length, R = contact.padRadius, root = L - C.padHeight, dome = [];
+  for (let k = 0; k <= 5; k++) { const a = (k / 6) * Math.PI / 2; dome.push([R * Math.cos(a), root + C.padHeight * Math.sin(a)]); }
+  return revolve([[0, 0], [C.stemRadius, 0], [C.stemRadius, root], ...dome, [0, L]], contact.base3D, contact.axis);
+}
+
+// The printed collar that holds a sensor in its hole; the lens stands for the bought sensor module.
+export function buildSensorGeometry(sensor, params) {
+  const S = params.sensors, r = S.collarRadius, b = S.backOffset, t = S.collarTop;
+  const at = (off) => sensor.base3D.map((c, i) => c + sensor.normal[i] * off);
+  return {
+    collar: revolve([[0, 0], [r, 0], [r, t - b - 0.5], [r - 0.5, t - b], [0, t - b]], at(b), sensor.normal),
+    lens: revolve([[0, 0], [S.lensRadius, 0], [S.lensRadius * 0.8, (S.lensTop - t) * 0.8], [0, S.lensTop - t]], at(t), sensor.normal),
+  };
+}
+
+// Sensors stay put. Contacts are children of their tile, so they travel with it.
+export function buildSensors(sensorsJson, params) {
+  const grp = new THREE.Group(); grp.name = 'sensors';
+  const metal = new THREE.MeshStandardMaterial({ color: 0xb9bcbf, roughness: 0.28, metalness: 0.9 });
+  const glass = new THREE.MeshStandardMaterial({ color: 0x0c1a24, roughness: 0.12, metalness: 0.4 });
+  for (const s of sensorsJson.sensors) {
+    const { collar, lens } = buildSensorGeometry(s, params);
+    const mesh = new THREE.Mesh(collar, metal); mesh.name = s.id;
+    mesh.add(new THREE.Mesh(lens, glass)); grp.add(mesh);
+  }
+  return grp;
+}
+
+export function attachContacts(tiles, contactsJson, params) {
+  const soft = new THREE.MeshStandardMaterial({ color: 0xe9e1d8, roughness: 0.6, metalness: 0 });
+  for (const c of contactsJson.contacts) {
+    const mesh = new THREE.Mesh(buildContactGeometry(c, params), soft); mesh.name = c.id;
+    tiles.getObjectByName(c.tile).add(mesh);
+  }
+}
+
 // ------------------------------------------------------------------ whole mask
-export function buildMask(params, tilesJson, pinsJson) {
+export function buildMask(params, tilesJson, pinsJson, sensorsJson, contactsJson) {
   const shell = makeShell(params);
   const root = new THREE.Group(); root.name = 'EX-SENSE';
   root.add(buildShellMesh(params, shell));
   root.add(buildPins(pinsJson, params));
-  root.add(buildTiles(tilesJson, params, shell));
+  const tiles = buildTiles(tilesJson, params, shell);
+  attachContacts(tiles, contactsJson, params);
+  root.add(tiles);
+  root.add(buildSensors(sensorsJson, params));
   return { root, shell };
 }

@@ -26,13 +26,33 @@ P = {
         "thetaMax_deg": 80.0, "phiMin_deg": -62.0, "phiMax_deg": 70.0,
         "chinTaper": 0.25, "chinTaperExp": 1.4,
         "thickness": 2.0,                       # grows inward (-normal)
+        # side profile of the centre line: nearly flat like a face, not an egg
+        "foreheadBack": 20.0, "profileTopY": 97.0,      # surface sits this far back at y = profileTopY
+        "chinBack": 5.0, "profileBottomY": 92.0,        # and this far back at y = -profileBottomY
+        "profileExp": 2.2,
+    },
+    # Reference face used only to check the fit. Typical adult proportions, estimated, not a scan.
+    # Each row is [y, centre-line z, half width], in mask coordinates with z = 0 at the brow.
+    "fitReference": {
+        "browOffset": -12.0,                    # brow sits this far behind the shell's front point
+        "earDepth": 95.0,                       # face curves back this far between centre and half width
+        "minClearance": 3.0,                    # shell inner surface must clear the face by this much
+        "noseHalfWidth": 19.0, "noseY": -36.0, "noseMinOpeningClearance": 0.5,
+        "rows": [
+            [97, -24, 62], [82, -12, 65], [60, -5, 68], [30, -1, 70], [20, 0, 71], [12, -2, 71], [6, -4, 71],
+            [-5, -3, 71], [-17, -2, 70], [-28, -1, 68], [-36, 0, 66], [-48, 6, 62], [-58, 3, 59], [-66, 5, 56],
+            [-78, -3, 50], [-92, -1, 42], [-108, -12, 25],
+        ],
+        # The nose is a separate ridge on the centre line: [y, height above the face], and its spread.
+        "noseRows": [[10, 0], [-5, 5], [-17, 10], [-28, 17], [-36, 5], [-42, 0]],
+        "noseSigma": 11.0,
     },
     "trim": {                                   # face outline = superellipse in UV
         "centerV": 6.0, "halfU": 104.0, "halfV": 118.0, "exponent": 2.5,
     },
     "openings": {
         "eyes": {"cx": 33.0, "cy": 12.0, "rx": 20.0, "ry": 12.5, "rot_deg": 8.0},
-        "noseMouth": {"apex": [0.0, -4.0], "baseY": -70.0, "baseHalfWidth": 27.0, "cornerRadius": 8.0},
+        "noseMouth": {"apex": [0.0, 8.0], "baseY": -70.0, "baseHalfWidth": 36.0, "cornerRadius": 8.0},
     },
     "tiles": {
         "latticeDiagU": 24.0,                   # diamond cell width (UV mm)
@@ -52,8 +72,35 @@ P = {
         "faceMeshSpacing": 3.0,                 # interior vertex spacing of the top/bottom face meshes (UV mm)
     },
     "pins": {"radius": 1.5, "height": 4.2, "baseOffset": 0.0, "minClearance": 0.2},   # visible actuator pins at lattice vertices
+    # Each form below follows a function. Sensor spots are lattice positions [i, j]: (U, V) = (i * diagU / 2, j * diagV / 2).
+    "sensors": {
+        "holeRadius": 4.5, "collarRadius": 6.5, "lensRadius": 4.8,   # hole in the shell, metal collar, lens
+        "backOffset": -2.2, "collarTop": 3.4, "lensTop": 4.0,        # along the surface normal
+        "tileClearance": 1.2,                                        # tiles stop this far from a collar
+        # one distance sensor per feedback sector, so each direction you feel has a window facing it
+        "space": {"top": [0, 6], "upperRight": [6, 4], "right": [7, 1], "lowerRight": [6, -4], "bottom": [0, -6.5],
+                  "lowerLeft": [-6, -4], "left": [-7, 1], "upperLeft": [-6, 4]},
+        "uv": {"sky": [0, 8]},                                       # top of the forehead, tilted toward the sky
+        "air": {"inlet": [5, -1], "outlet": [-5, -1]},               # particle sensor pulls air across the face
+    },
+    "straps": {
+        "radius": 3.5, "tileClearance": 1.2,
+        "slots": [[92.0, 24.0, 90.0, 44.0], [92.0, -24.0, 90.0, -42.0]],   # [U0, V0, U1, V1], mirrored to the left side
+    },
+    # Skin side: a stem from each tile passes through the shell and ends in a soft pad just off the skin,
+    # so a pushed tile is felt. Its length comes from the gap to the reference face at that tile.
+    "contacts": {
+        "stemRadius": 1.2, "stemHoleRadius": 1.8, "padRadius": 3.5, "padHeight": 2.0,
+        "thermalPadRadius": 7.0, "thermalZones": ["cheek_L", "cheek_R"],   # warm and cool cues need more skin
+        "tipGap": 0.5,                          # pad sits this far off the skin at rest
+        "maxReach": 18.0,                       # a tile further than this from the face gets no contact
+        "openingMargin": 1.0,                   # pads stay this far outside the eye and nose openings
+        "minPadGap": 1.0,                       # pads keep at least this far apart
+        "minPerSector": 3,
+    },
 }
 S, T, O, TL = P["shell"], P["trim"], P["openings"], P["tiles"]
+SE, ST, CT = P["sensors"], P["straps"], P["contacts"]
 R = math.radians
 A, B, C = S["a_halfWidth"], S["b_halfHeight"], S["c_depth"]
 U_MAX = A * R(S["thetaMax_deg"]); V_MIN = B * R(S["phiMin_deg"]); V_MAX = B * R(S["phiMax_deg"])
@@ -62,9 +109,17 @@ U_MAX = A * R(S["thetaMax_deg"]); V_MIN = B * R(S["phiMin_deg"]); V_MAX = B * R(
 def taper(phi):
     return 1.0 - S["chinTaper"] * (max(0.0, -math.sin(phi)) ** S["chinTaperExp"])
 
+def profile(phi):
+    """Centre-line depth: how far the surface sits behind the front point at this height."""
+    y = B * math.sin(phi)
+    if y >= 0:
+        return -S["foreheadBack"] * (y / S["profileTopY"]) ** S["profileExp"]
+    return -S["chinBack"] * (-y / S["profileBottomY"]) ** S["profileExp"]
+
 def shell(theta, phi):
     k = taper(phi)
-    return (A * k * math.sin(theta) * math.cos(phi), B * math.sin(phi), C * math.cos(theta) * math.cos(phi) - C)
+    return (A * k * math.sin(theta) * math.cos(phi), B * math.sin(phi),
+            C * (math.cos(theta) - 1.0) * math.cos(phi) + profile(phi))
 
 def normal_tp(theta, phi):
     e = 1e-4; p0 = shell(theta, phi); pt = shell(theta + e, phi); pp = shell(theta, phi + e)
@@ -137,6 +192,26 @@ def sdf_tri(X, Y):
 
 def sdf_openings_front(X, Y):
     return np.minimum.reduce([sdf_eye(X, Y, -1), sdf_eye(X, Y, 1), sdf_tri(X, Y)])
+
+def sensor_spots():
+    cell = lambda ij: (ij[0] * TL["latticeDiagU"] / 2, ij[1] * TL["latticeDiagV"] / 2)
+    return [{"kind": kind, "name": name, "uv": cell(ij)} for kind in ("space", "uv", "air") for name, ij in SE[kind].items()]
+
+def strap_slots():
+    return [s for u0, v0, u1, v1 in ST["slots"] for s in ([u0, v0, u1, v1], [-u0, v0, -u1, v1])]
+
+SPOTS, SLOTS = sensor_spots(), strap_slots()
+
+def sdf_segment(U, V, u0, v0, u1, v1):
+    du, dv = u1 - u0, v1 - v0; l2 = du * du + dv * dv
+    t = np.clip(((U - u0) * du + (V - v0) * dv) / l2, 0, 1) if l2 else 0.0
+    return np.hypot(U - (u0 + t * du), V - (v0 + t * dv))
+
+def sdf_features(U, V):
+    """Keep-out for tiles and pins, in UV mm: sensor collars and strap slots."""
+    near = [sdf_segment(U, V, *s["uv"], *s["uv"]) - SE["collarRadius"] - SE["tileClearance"] for s in SPOTS]
+    near += [sdf_segment(U, V, *slot) - ST["radius"] - ST["tileClearance"] for slot in SLOTS]
+    return np.minimum.reduce(near)
 
 def sdf_diamond(U, V, cu, cv):
     hu, hv = TL["latticeDiagU"] / 2, TL["latticeDiagV"] / 2
@@ -252,6 +327,7 @@ def build_tiles():
                 sdf_trim(Ug, Vg) + TL["edgeMargin"],
                 sdf_shell_rect(Ug, Vg) + TL["edgeMargin"],
                 TL["openingMargin"] - sdf_openings_front(X, Y),
+                -sdf_features(Ug, Vg),
                 (gap / 2 - np.abs(Ug)) if TL["centreSeam"] else np.full(Ug.shape, -1.0),
             ])
             mask = F < 0
@@ -325,6 +401,7 @@ def build_pins(tiles):
             Ug, Vg = np.array([[u]]), np.array([[v]]); X, Y = uv_to_front_np(Ug, Vg)
             if sdf_trim(Ug, Vg)[0, 0] > -TL["edgeMargin"] - 2 or sdf_shell_rect(Ug, Vg)[0, 0] > -2: continue
             if sdf_openings_front(X, Y)[0, 0] < TL["openingMargin"] + 1: continue
+            if sdf_features(Ug, Vg)[0, 0] < P["pins"]["radius"]: continue
             # keep only where at least 2 tiles meet around it
             near = sum(1 for t in tiles if abs(t["centroidUV"][0] - u) < du * 0.6 and abs(t["centroidUV"][1] - v) < dv * 0.6)
             if near < 2: continue
@@ -370,10 +447,114 @@ def trim_poly_uv(n=240):
         pts.append((float(np.clip(u, -U_MAX, U_MAX)), float(np.clip(v, V_MIN, V_MAX))))
     return pts
 
+# ------------------------------------------------------------------ 8. FIT CHECK AGAINST THE REFERENCE FACE
+def reference_face():
+    F = P["fitReference"]; rows = np.array(sorted(F["rows"]), float); nose = np.array(sorted(F["noseRows"]), float)
+    def z_at(x, y):
+        half = np.interp(y, rows[:, 0], rows[:, 2]); mid = np.interp(y, rows[:, 0], rows[:, 1])
+        r = min(abs(x) / half, 1.0)
+        ridge = np.interp(y, nose[:, 0], nose[:, 1], left=0.0, right=0.0) * math.exp(-((x / F["noseSigma"]) ** 2))
+        return F["browOffset"] + mid + ridge - F["earDepth"] * (1.0 - math.sqrt(1.0 - r * r))
+    return z_at
+
+def fit_report():
+    """Smallest gap between the shell's inner surface and the face, over the solid part of the shell."""
+    F = P["fitReference"]; z_at = reference_face(); best = None; band = {}
+    for u in np.arange(-U_MAX, U_MAX, 4.0):
+        for v in np.arange(V_MIN, V_MAX, 3.0):
+            Ug, Vg = np.array([[u]]), np.array([[v]]); X, Y = uv_to_front_np(Ug, Vg)
+            if sdf_trim(Ug, Vg)[0, 0] > 0 or sdf_openings_front(X, Y)[0, 0] < 0: continue
+            p = uv_to_3d(float(u), float(v), -S["thickness"])
+            gap = p[2] - z_at(p[0], p[1])
+            if best is None or gap < best[0]: best = (gap, p)
+            key = "forehead" if p[1] > 30 else "bridge" if p[1] > -20 and abs(p[0]) < 12 else "chin" if p[1] < -70 else "cheek"
+            band[key] = min(band.get(key, 1e9), gap)
+    top = [p for p in openings_front_points("noseMouth")]
+    half_at_nose = min(abs(x) for x, y in top if abs(y - F["noseY"]) < 2.0)
+    nose_gap = half_at_nose - F["noseHalfWidth"]
+    assert best[0] >= F["minClearance"], f"shell cuts into the reference face: gap {best[0]:.1f} at {best[1]}"
+    assert nose_gap >= F["noseMinOpeningClearance"], f"nose opening too narrow: {nose_gap:.1f}"
+    return {"minGap": round(best[0], 2), "byRegion": {k: round(v, 2) for k, v in band.items()},
+            "noseOpeningHalfWidth": round(half_at_nose, 2), "noseSideClearance": round(nose_gap, 2)}
+
+def openings_front_points(name):
+    pts = np.array(tri_poly()); out = []
+    for a, b in zip(pts, np.roll(pts, -1, axis=0)):
+        for t in np.linspace(0, 1, 12, endpoint=False): out.append(tuple(a + (b - a) * t))
+    return out
+
+# ------------------------------------------------------------------ 9. SENSORS, CONTACTS
+def build_sensors():
+    out = []
+    for s in SPOTS:
+        u, v = s["uv"]; n = normal_tp(u / A, v / B)
+        out.append({"id": f"{s['kind']}-{s['name']}", "kind": s["kind"], "name": s["name"], "uv": [round(u, 3), round(v, 3)],
+                    "p2D": [round(x, 3) for x in uv_to_front(u, v)], "base3D": [round(x, 3) for x in uv_to_3d(u, v, 0.0)],
+                    "normal": [round(x, 5) for x in n], "facingDeg": round(math.degrees(math.acos(n[2])), 1)})
+    return out
+
+def tile_anchor(outline):
+    """Deepest point inside a tile, so the stem stays clear of its edges even on clipped tiles."""
+    lo, hi = np.floor(outline.min(0) * 2) / 2, np.ceil(outline.max(0) * 2) / 2      # grid on 0.5 multiples, so it mirrors
+    grid = np.stack(np.meshgrid(np.arange(lo[0], hi[0], 0.5), np.arange(lo[1], hi[1], 0.5)), -1).reshape(-1, 2)
+    grid = grid[measure.points_in_poly(grid, outline)]
+    depth = np.linalg.norm(grid[:, None] - outline[None], axis=2).min(1)
+    deep = grid[depth > depth.max() - 0.5]                                           # diamonds have a flat ridge of equal depth
+    return deep[int(np.linalg.norm(deep - outline.mean(0), axis=1).argmin())]
+
+def build_contacts(tiles):
+    z_at = reference_face(); out = []
+    for t in tiles:
+        u, v = (float(x) for x in tile_anchor(np.array(t["outlineUV"])))
+        n = np.array(normal_tp(u / A, v / B)); start = np.array(uv_to_3d(u, v, -S["thickness"]))
+        reach = next((d for d in np.arange(0.0, CT["maxReach"], 0.05)
+                      if (start - n * d)[2] <= z_at(*(start - n * d)[:2])), None)
+        if reach is None or reach < CT["padHeight"] + CT["tipGap"]: continue
+        tip = start - n * (reach - CT["tipGap"])
+        room = sdf_openings_front(np.array([[tip[0]]]), np.array([[tip[1]]]))[0, 0] - CT["openingMargin"]
+        thermal = t["zone"] in CT["thermalZones"] and room >= CT["thermalPadRadius"]
+        if room < CT["padRadius"]: continue
+        out.append({"id": "C" + t["id"][1:], "tile": t["id"], "uv": [round(u, 3), round(v, 3)], "sector": t["sector"], "zone": t["zone"],
+                    "base3D": [round(x, 3) for x in uv_to_3d(u, v, TL["undersideOffset"])], "axis": [round(float(x), 5) for x in -n],
+                    "length": round(TL["undersideOffset"] + S["thickness"] + float(reach) - CT["tipGap"], 2),
+                    "padRadius": CT["thermalPadRadius"] if thermal else CT["padRadius"], "thermal": bool(thermal), "reach": round(float(reach), 2),
+                    "tileArea": t["areaUV"]})
+    return settle_pads(out)
+
+def contact_tip(c):
+    return np.array(c["base3D"]) + np.array(c["axis"]) * c["length"]
+
+def settle_pads(contacts):
+    """Two pads too close: a wide pad shrinks first, then the one on the smaller tile goes."""
+    while True:
+        clash = next(((a, b) for i, a in enumerate(contacts) for b in contacts[i + 1:]
+                      if np.linalg.norm(contact_tip(a) - contact_tip(b)) - a["padRadius"] - b["padRadius"] < CT["minPadGap"]), None)
+        if clash is None: break
+        wide = [c for c in clash if c["thermal"]]
+        chosen = min(wide or clash, key=lambda c: c["tileArea"])
+        pair = [c for c in contacts if abs(c["uv"][0] + chosen["uv"][0]) < 1.0 and abs(c["uv"][1] - chosen["uv"][1]) < 1.0]
+        for c in pair + [chosen]:                    # keep left and right the same
+            if wide: c["thermal"] = False; c["padRadius"] = CT["padRadius"]
+            elif c in contacts: contacts.remove(c)
+    for c in contacts: del c["tileArea"]
+    return contacts
+
+def contact_report(contacts):
+    room = min(float(np.linalg.norm(contact_tip(c) - contact_tip(d))) - c["padRadius"] - d["padRadius"]
+               for i, c in enumerate(contacts) for d in contacts[i + 1:])
+    by = {}
+    for c in contacts: by[c["sector"]] = by.get(c["sector"], 0) + 1
+    names = ["right", "upperRight", "top", "upperLeft", "left", "lowerLeft", "bottom", "lowerRight"]
+    assert all(by.get(s, 0) >= CT["minPerSector"] for s in names), f"sector without enough contacts: {by}"
+    assert TL["travelIn"] > CT["tipGap"], "a pushed tile would not reach the skin"
+    return {"bySector": {s: by[s] for s in names}, "thermalPads": sum(c["thermal"] for c in contacts),
+            "smallestPadGap": round(room, 2), "skinPress": round(TL["travelIn"] - CT["tipGap"], 2),
+            "lengthRange": [min(c["length"] for c in contacts), max(c["length"] for c in contacts)]}
+
 # ------------------------------------------------------------------ main
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    tiles = build_tiles(); pins = build_pins(tiles)
+    tiles = build_tiles(); pins = build_pins(tiles); sensors = build_sensors(); contacts = build_contacts(tiles)
     trim_uv = trim_poly_uv(); trim_2d = [uv_to_front(u, v) for u, v in trim_uv]
     openings_2d = {"eye_L": eye_poly(-1), "eye_R": eye_poly(1), "noseMouth": tri_poly()}
     xs = [p[0] for p in trim_2d]; ys = [p[1] for p in trim_2d]
@@ -381,15 +562,21 @@ if __name__ == "__main__":
     P["derived"] = {"U_MAX": round(U_MAX, 3), "V_MIN": round(V_MIN, 3), "V_MAX": round(V_MAX, 3),
                     "overallWidth": round(max(xs) - min(xs), 2), "overallHeight": round(max(ys) - min(ys), 2),
                     "overallDepth": round(-min(zs), 2), "Y_MIN": round(min(ys), 3), "Y_MAX": round(max(ys), 3),
-                    "tileCount": len(tiles), "pinCount": len(pins)}
+                    "tileCount": len(tiles), "pinCount": len(pins), "sensorCount": len(sensors), "contactCount": len(contacts),
+                    "fit": fit_report(), "contacts": contact_report(contacts)}
     P["outlines"] = {
         "trimUV": [[round(a, 3), round(b, 3)] for a, b in trim_uv],
         "trim2D": [[round(a, 3), round(b, 3)] for a, b in trim_2d],
         "openings2D": {k: [[round(a, 3), round(b, 3)] for a, b in v] for k, v in openings_2d.items()},
         "openingsUV": {k: [[round(c, 3) for c in front_to_uv(a, b)] for a, b in v] for k, v in openings_2d.items()},
+        # holes through the shell, each a capsule [U0, V0, U1, V1, radius]
+        "holesUV": [[*s["uv"], *s["uv"], SE["holeRadius"]] for s in sensors] + [[*slot, ST["radius"]] for slot in SLOTS]
+                   + [[*c["uv"], *c["uv"], CT["stemHoleRadius"]] for c in contacts],
     }
     json.dump(P, open("params.json", "w"), indent=1)
     json.dump({"count": len(tiles), "tiles": tiles}, open("tiles.json", "w"))
     json.dump({"count": len(pins), "pins": pins}, open("pins.json", "w"))
+    json.dump({"count": len(sensors), "sensors": sensors}, open("sensors.json", "w"))
+    json.dump({"count": len(contacts), "contacts": contacts}, open("contacts.json", "w"))
     print(json.dumps(P["derived"], indent=1))
-    import drawings; drawings.make_all(P, tiles, pins)
+    import drawings; drawings.make_all(P, tiles, pins, sensors, contacts)

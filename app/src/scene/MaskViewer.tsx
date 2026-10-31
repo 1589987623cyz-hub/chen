@@ -2,8 +2,10 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Environment, Html, Lightformer, Line, OrbitControls } from '@react-three/drei'
 import { useEffect, useMemo } from 'react'
 import * as THREE from 'three'
+import contactsJson from '@exsense/contacts.json'
 import pinsJson from '@exsense/pins.json'
 import { buildMask, setTileTravel } from '@exsense/reference/maskGeometry.js'
+import sensorsJson from '@exsense/sensors.json'
 import tilesJson from '@exsense/tiles.json'
 import type { Config, ZoneId } from '@/domain/params'
 import { maskParams, openingOutlines, shell, tiles } from '@/geometry/mask'
@@ -22,7 +24,7 @@ export interface ViewerProps {
   label: string
 }
 
-const TARGET: [number, number, number] = [0, 2.6, -32]
+const TARGET: [number, number, number] = [0, 2.6, -maskParams.derived.overallDepth / 2]
 const DISTANCE = 760
 const VIEW_POSITIONS: Record<ViewName, [number, number, number]> = {
   front: [TARGET[0], TARGET[1], TARGET[2] + DISTANCE],
@@ -75,7 +77,7 @@ function ZoneLabel({ zone }: { zone: ZoneId }) {
 }
 
 function Mask({ config, state = { kind: 'rest' }, highlightZone, exploded, blinkHz = 0 }: ViewerProps) {
-  const { root } = useMemo(() => buildMask(maskParams, tilesJson, pinsJson), [])
+  const { root } = useMemo(() => buildMask(maskParams, tilesJson, pinsJson, sensorsJson, contactsJson), [])
   const meshes = useMemo(() => {
     const group = root.getObjectByName('tiles') as THREE.Group
     return group.children as THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>[]

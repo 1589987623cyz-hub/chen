@@ -9,3 +9,5 @@ dist
 .claude
 head-model
 我的-EX-SENSE*
+.venv
+__pycache__
