@@ -147,7 +147,7 @@ export async function createInvite(configId: string) {
   if (!supabase) throw new Error('cloud required')
   const { data, error } = await supabase.rpc('create_invite', { p_configuration_id: configId })
   if (error) throw error
-  return `${location.origin}/invite/${data as string}`
+  return `${location.origin}${import.meta.env.BASE_URL}invite/${data as string}`
 }
 
 export async function revokeCollaborator(id: string) {

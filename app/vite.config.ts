@@ -5,6 +5,8 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
 export default defineConfig({
+  // GitHub Pages serves the site from /<repository>/, so the workflow sets this path.
+  base: process.env.SITE_BASE ?? '/',
   plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
