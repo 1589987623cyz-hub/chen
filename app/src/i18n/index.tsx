@@ -38,8 +38,7 @@ const I18nContext = createContext<I18n | null>(null)
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => {
     const stored = readStored('exsense.lang')
-    if (stored === 'zh' || stored === 'en') return stored
-    return navigator.language.startsWith('zh') ? 'zh' : 'en'
+    return stored === 'zh' ? 'zh' : 'en'
   })
 
   useEffect(() => {

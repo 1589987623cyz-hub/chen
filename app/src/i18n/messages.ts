@@ -233,7 +233,7 @@ export const zh: Messages = {
 
   'dash.title': '我的配置',
   'dash.new': '新建配置',
-  'dash.defaultName': '我的 EX-SENSE',
+  'dash.defaultName': 'EX-SENSE',
   'dash.import': '导入配置文件',
   'dash.importFailed': '无法导入：文件不是有效的 EX-SENSE 配置。',
   'dash.empty': '还没有配置。新建一份开始吧。',
@@ -679,7 +679,7 @@ export const en: Messages = {
 
   'dash.title': 'My configurations',
   'dash.new': 'New configuration',
-  'dash.defaultName': 'My EX-SENSE',
+  'dash.defaultName': 'EX-SENSE',
   'dash.import': 'Import a configuration file',
   'dash.importFailed': 'Import failed: this is not a valid EX-SENSE configuration.',
   'dash.empty': 'No configurations yet. Create one to get started.',
