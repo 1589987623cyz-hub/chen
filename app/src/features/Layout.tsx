@@ -53,7 +53,7 @@ export function Layout() {
   }, [])
 
   const link = ({ isActive }: { isActive: boolean }) =>
-    `rounded px-2 py-2 underline-offset-4 hover:underline ${isActive ? 'font-semibold underline' : ''}`
+    `rounded-full px-3 py-2 hover:bg-soft ${isActive ? 'bg-soft font-semibold' : ''}`
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -64,8 +64,11 @@ export function Layout() {
         {t('app.skip')}
       </a>
       <header className="border-b border-line bg-surface">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3">
-          <Link to="/" className="font-serif text-xl font-semibold tracking-wide">EX-SENSE</Link>
+        <div className="mx-auto flex max-w-[96rem] flex-wrap items-center justify-between gap-3 px-4 py-3">
+          <Link to="/" className="flex items-center gap-2 font-serif text-xl font-semibold tracking-wide">
+            <img src={`${import.meta.env.BASE_URL}favicon.svg`} alt="" className="size-6" />
+            EX-SENSE
+          </Link>
           <nav aria-label={t('nav.primary')} className="flex flex-wrap items-center gap-1">
             <NavLink to="/" end className={link}>{t('nav.home')}</NavLink>
             <NavLink to="/dashboard" className={link}>{t('nav.dashboard')}</NavLink>
@@ -93,12 +96,13 @@ export function Layout() {
         </div>
       </header>
       {!signedIn && !pathname.startsWith('/view/') && (
-        <p className="bg-soft px-4 py-2 text-center text-sm">{t('common.localMode')}</p>
+        <p className="bg-sage px-4 py-1.5 text-center text-sm text-sage-ink">{t('common.localMode')}</p>
       )}
-      <main id="main" key={pathname} className="mx-auto w-full max-w-7xl flex-1 px-4 py-6">
+      <main id="main" key={pathname} className="mx-auto w-full max-w-[96rem] flex-1 px-4 py-6">
         <Outlet />
       </main>
-      <footer className="border-t border-line px-4 py-4 text-center text-sm">
+      <footer className="border-t border-line px-4 py-5 text-center text-sm text-muted">
+        <p>{t('footer.note')}</p>
         <Link to="/accessibility" className="underline">{t('nav.a11y')}</Link>
       </footer>
     </div>

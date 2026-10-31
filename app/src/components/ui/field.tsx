@@ -4,7 +4,7 @@ import { useId, type ComponentProps, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 
 const control =
-  'min-h-11 w-full rounded-md border border-line bg-surface px-3 py-2 text-base text-ink disabled:cursor-not-allowed disabled:opacity-60'
+  'min-h-11 w-full rounded-lg border border-line-strong bg-surface px-3 py-2 text-base text-ink disabled:cursor-not-allowed disabled:opacity-60'
 
 export function Label({ className, ...props }: ComponentProps<typeof LabelPrimitive.Root>) {
   return <LabelPrimitive.Root className={cn('block font-medium', className)} {...props} />
@@ -74,10 +74,48 @@ export function SwitchField({ label, hint, checked, disabled, onCheckedChange }:
         disabled={disabled}
         onCheckedChange={onCheckedChange}
         aria-describedby={hint ? `${id}-hint` : undefined}
-        className="relative h-7 w-12 shrink-0 rounded-full border-2 border-line bg-soft data-[state=checked]:bg-accent disabled:opacity-60"
+        className="relative h-7 w-12 shrink-0 rounded-full border-2 border-line-strong bg-soft data-[state=checked]:bg-accent disabled:opacity-60"
       >
         <SwitchPrimitive.Thumb className="block size-5 translate-x-0.5 rounded-full bg-ink transition-transform data-[state=checked]:translate-x-5 data-[state=checked]:bg-accent-ink" />
       </SwitchPrimitive.Root>
+    </div>
+  )
+}
+
+interface SliderFieldProps {
+  label: ReactNode
+  hint?: ReactNode
+  value: number
+  min: number
+  max: number
+  step?: number
+  unit?: string
+  disabled?: boolean
+  onChange: (value: number) => void
+}
+
+export function SliderField({ label, hint, value, min, max, step = 1, unit = '', disabled, onChange }: SliderFieldProps) {
+  const id = useId()
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <Label htmlFor={id}>{label}</Label>
+        <output htmlFor={id} className="text-sm tabular-nums text-muted">{value}{unit}</output>
+      </div>
+      {hint && <p id={`${id}-hint`} className="text-sm text-muted">{hint}</p>}
+      <input
+        id={id}
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        disabled={disabled}
+        aria-describedby={hint ? `${id}-hint` : undefined}
+        aria-valuetext={`${value}${unit}`}
+        className="mt-1 h-11 w-full cursor-pointer disabled:cursor-not-allowed disabled:opacity-60"
+        onChange={(e) => onChange(Number(e.target.value))}
+      />
     </div>
   )
 }

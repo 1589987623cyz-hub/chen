@@ -4,12 +4,12 @@ import type { ComponentProps } from 'react'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  'inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-4 py-2 text-base font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
+  'inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-5 py-2 text-base font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60',
   {
     variants: {
       variant: {
         default: 'bg-accent text-accent-ink hover:opacity-90',
-        outline: 'border border-line bg-surface text-ink hover:bg-soft',
+        outline: 'border border-line-strong bg-surface text-ink hover:bg-soft',
         ghost: 'text-ink hover:bg-soft',
         danger: 'border border-danger bg-surface text-danger hover:bg-soft',
       },

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { createConfig, parseConfig, SECTORS, ZONE_IDS } from '@/domain/params'
+import { createConfig, feedbackFields, parseConfig, SECTORS, ZONE_IDS } from '@/domain/params'
 import { hasBlockingIssue, validate } from '@/domain/validate'
-import { resolveSimulation, tileFeedback } from '@/scene/feedback'
+import { limitTravel, pressTravel, resolveSimulation, tileFeedback } from '@/scene/feedback'
 import {
   buildParts,
   contactMesh,
@@ -12,7 +12,6 @@ import {
   pins,
   sensorMesh,
   sensors,
-  shell,
   shellMesh,
   tileMesh,
   tiles,
@@ -68,13 +67,43 @@ describe('SPEC section 8 acceptance', () => {
     }
   })
 
-  it('keeps tiles clear of sensor collars', () => {
-    const { collarRadius, tileClearance } = maskParams.sensors
+  it('keeps every petal clear of sensor collars', () => {
     for (const s of sensors) {
       for (const tile of tiles) {
         for (const [u, v] of tile.outlineUV) {
-          expect(Math.hypot(u - s.uv[0], v - s.uv[1])).toBeGreaterThan(collarRadius + tileClearance - 0.3)
+          expect(Math.hypot(u - s.uv[0], v - s.uv[1])).toBeGreaterThan(maskParams.sensors.collarRadius)
         }
+      }
+    }
+  })
+
+  it('gives every diamond cell one petal, sitting on that cell, with its tip up', () => {
+    const { ns, nt } = maskParams.tiles.petal
+    expect(new Set(tiles.map((t) => t.id)).size).toBe(96)
+    const mid = (nt - 1) / 2
+    for (const tile of tiles) {
+      const at = (i: number) => tile.petal.uv.slice((i * nt + mid) * 2, (i * nt + mid) * 2 + 2)
+      const [u0, v0] = at(0)
+      const [u1, v1] = at(ns - 1)
+      expect(v1).toBeGreaterThan(v0)
+      expect(Math.abs(u1 - u0) / (v1 - v0)).toBeLessThan(0.65)
+      expect(Math.hypot((u0 + u1) / 2 - tile.centroidUV[0], (v0 + v1) / 2 - tile.centroidUV[1])).toBeLessThan(20)
+    }
+  })
+
+  it('stacks petals so nothing passes through, even with a petal pushed in', () => {
+    const { rimCrossings, pushedGap, coverPercent } = maskParams.derived.petals
+    expect(rimCrossings).toBe(0)
+    expect(pushedGap).toBeGreaterThanOrEqual(0)
+    expect(coverPercent).toBeGreaterThan(90)
+  })
+
+  it('runs every stem clear of the petals beneath it', () => {
+    for (const c of contacts) {
+      const own = tiles.find((t) => t.id === c.tile)!
+      expect(own.anchorUV).toEqual(c.uv)
+      for (const tile of tiles) {
+        if (tile.petal.rank < own.petal.rank) expect(insidePolygon(tile.outlineUV, c.uv[0], c.uv[1])).toBe(false)
       }
     }
   })
@@ -83,50 +112,34 @@ describe('SPEC section 8 acceptance', () => {
     for (const mesh of meshes) expect(mesh.positions.every(Number.isFinite)).toBe(true)
   })
 
-  it('makes every tile a closed solid with positive volume', () => {
+  it('makes every petal a closed solid with positive volume', () => {
     for (const mesh of meshes) {
       expect(isClosed(mesh)).toBe(true)
       expect(signedVolume(mesh)).toBeGreaterThan(0)
     }
   })
 
-  it('keeps tile undersides at least 2.5 mm off the shell, and 1 mm when pushed', () => {
-    const { undersideOffset, travelIn } = maskParams.tiles
-    const distanceToShell = (x: number, y: number, z: number, u: number, v: number) => {
-      let best = Infinity
-      for (let du = -8; du <= 8; du += 0.5) {
-        for (let dv = -8; dv <= 8; dv += 0.5) {
-          const p = shell.uvTo3D(u + du, v + dv, 0)
-          best = Math.min(best, Math.hypot(p.x - x, p.y - y, p.z - z))
-        }
-      }
-      return best
-    }
-    for (const tile of tiles.filter((_, i) => i % 5 === 0)) {
-      for (const [u, v] of tile.bottomFace.uv.filter((_, i) => i % 9 === 0)) {
-        const p = shell.uvTo3D(u, v, undersideOffset)
-        expect(distanceToShell(p.x, p.y, p.z, u, v)).toBeGreaterThan(undersideOffset - 0.02)
-        const pushed = shell.uvTo3D(u, v, undersideOffset - travelIn)
-        expect(distanceToShell(pushed.x, pushed.y, pushed.z, u, v)).toBeGreaterThan(0.98)
-      }
-    }
+  it('keeps every moving petal off the shell when pushed in', () => {
+    const { thickness, travelIn } = maskParams.tiles
+    for (const tile of tiles) expect(Math.min(...tile.petal.off) - thickness - travelIn).toBeGreaterThan(0)
   })
 
-  it('keeps pins clear of every tile', () => {
-    const { radius, minClearance } = maskParams.pins
+  it('keeps pushed petals above the posts', () => {
+    const { thickness, travelIn, petal } = maskParams.tiles
     for (const pin of pins) {
-      for (const tile of tiles) {
-        for (const [u, v] of tile.outlineUV) {
-          expect(Math.hypot(u - pin.uv[0], v - pin.uv[1])).toBeGreaterThanOrEqual(radius + minClearance)
+      for (const tile of tiles.filter((t) => insidePolygon(t.outlineUV, pin.uv[0], pin.uv[1]))) {
+        let lowest = Infinity
+        for (let k = 0; k < petal.ns * petal.nt; k++) {
+          if (Math.hypot(tile.petal.uv[2 * k] - pin.uv[0], tile.petal.uv[2 * k + 1] - pin.uv[1]) < 4) lowest = Math.min(lowest, tile.petal.off[k])
         }
+        expect(lowest - thickness - travelIn).toBeGreaterThan(maskParams.pins.height - 0.3)
       }
     }
   })
 
-  it('has no tile vertex on a gap-crossing centre line', () => {
-    const { gap } = maskParams.tiles
+  it('keeps both halves on their own side of the centre seam', () => {
     for (const tile of tiles) {
-      for (const [u] of tile.outlineUV) expect(Math.abs(u)).toBeGreaterThan(gap / 2 - 0.2)
+      for (const [u] of tile.outlineUV) expect(u * tile.centroidUV[0]).toBeGreaterThan(0)
     }
   })
 })
@@ -146,7 +159,7 @@ describe('printable parts', () => {
     }
   })
 
-  it('exports one part per tile and pin plus the shell', () => {
+  it('exports one part per petal and post plus the shell', () => {
     expect(buildParts().length).toBe(1 + tiles.length + pins.length + sensors.length + contacts.length)
   })
 })
@@ -171,6 +184,60 @@ describe('states', () => {
       expect(response.size).toBeGreaterThan(0)
       expect([...response.values()].every((item) => item.travel === 0)).toBe(true)
     }
+  })
+
+  it('leaves muted petals out and uses the chosen travel', () => {
+    const c = config()
+    const first = tiles.find((t) => t.sector === 'top')!
+    c.motion = { ...c.motion, travel: 1, muted: [first.id] }
+    const response = tileFeedback(c, { kind: 'space', sector: 'top' })
+    expect(response.has(first.id)).toBe(false)
+    expect([...response.values()].every((item) => item.travel <= 1)).toBe(true)
+  })
+
+  it('never lets a petal sink further into the one beneath than the room between them', () => {
+    const c = config()
+    const check = (travel: Map<string, number>) => {
+      for (const tile of tiles) {
+        const mine = travel.get(tile.id)
+        if (mine === undefined) continue
+        for (const [id, gap] of tile.beneath) expect(mine - (travel.get(id) ?? 0)).toBeLessThanOrEqual(gap + 0.011)
+      }
+    }
+    for (const tile of tiles) check(pressTravel(c, [tile.id]))
+    for (const sector of SECTORS) {
+      const list = tiles.filter((t) => t.sector === sector)
+      check(limitTravel(new Map(list.map((t, i) => [t.id, i % 2 ? 1.5 : 0.6]))))
+    }
+  })
+
+  it('holds back a petal over a muted one', () => {
+    const c = config()
+    const over = tiles.find((t) => t.sector === 'top' && t.beneath.some(([id, gap]) => gap < 1.4 && tiles.find((x) => x.id === id)!.sector === 'top'))!
+    const under = over.beneath.find(([, gap]) => gap < 1.4)!
+    c.motion.muted = [under[0]]
+    const item = tileFeedback(c, { kind: 'space', sector: 'top' }).get(over.id)!
+    expect(item.travel).toBeLessThanOrEqual(under[1] + 0.01)
+  })
+
+  it('starts the petals underneath first in a cascade', () => {
+    const c = config()
+    c.motion.pattern = 'cascade'
+    const response = tileFeedback(c, { kind: 'space', sector: 'top' })
+    for (const tile of tiles) {
+      const mine = response.get(tile.id)
+      if (!mine) continue
+      for (const [id] of tile.beneath) {
+        const under = response.get(id)
+        if (under) expect(under.delay).toBeLessThan(mine.delay)
+      }
+    }
+  })
+
+  it('warns when muting leaves a direction too few petals', () => {
+    const c = config()
+    c.motion.muted = tiles.filter((t) => t.sector === 'right').map((t) => t.id)
+    expect(validate(c).some((i) => i.code === 'weakSector')).toBe(true)
   })
 
   it('skips turned-off zones', () => {
@@ -236,6 +303,22 @@ describe('configuration', () => {
     expect(parsed.cues).toMatchObject({ thermal: false, tap: true })
   })
 
+  it('adds the petal settings to an older saved configuration', () => {
+    const older = { schemaVersion: 2, id: 'older', name: 'Older', values: {}, cues: {}, enabledZones: ['chin'] }
+    const parsed = parseConfig(JSON.stringify(older))
+    expect(parsed.schemaVersion).toBe(3)
+    expect(parsed.look.palette).toBe('blossom')
+    expect(parsed.motion.travel).toBe(1.5)
+    expect(parsed.motion.pattern).toBe('together')
+    expect(parsed.look.idle).toBe('none')
+  })
+
+  it('counts petal motion as a feedback setting and look as not', () => {
+    const c = config()
+    expect(feedbackFields(c)).toHaveProperty('motion')
+    expect(feedbackFields(c)).not.toHaveProperty('look')
+  })
+
   it('migrates a configuration saved for the old model', () => {
     const old = {
       schemaVersion: 1,
@@ -247,7 +330,7 @@ describe('configuration', () => {
       zoneMap: {},
     }
     const migrated = parseConfig(JSON.stringify(old))
-    expect(migrated.schemaVersion).toBe(2)
+    expect(migrated.schemaVersion).toBe(3)
     expect(migrated.values.pupilDistance).toBe(60)
     expect(migrated.enabledZones).toEqual(ZONE_IDS)
     expect('petalScale' in migrated.values).toBe(false)

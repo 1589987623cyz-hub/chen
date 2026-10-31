@@ -1,12 +1,12 @@
 """
-EX-SENSE mask — single-source geometry generator (tiles only, no petals).
+EX-SENSE mask — single-source geometry generator.
 
 Units: millimetres. Three.js axes: +Y up, +Z toward viewer (mask faces +Z), +X viewer's right.
 Origin = front-most point of the shell outer surface (between the eyes).
 
 Surface parameter space ("UV", in mm):   U = a * theta ,  V = b * phi
-All tile outlines are stored in UV. Map any UV point to 3D with
-    shellAt(U/a, V/b) + shellNormal(U/a, V/b) * offset
+Every petal is stored in UV plus an offset. Map any UV point to 3D with
+    shellAt(U/a, V/b) + shellNormal(U/a, V/b) * (relief(U, V) + offset)
 
 Run:  python generate.py      -> params.json, tiles.json, drawings/*.svg
 Needs: numpy, scipy, scikit-image
@@ -14,6 +14,8 @@ Needs: numpy, scipy, scikit-image
 import json, math, os
 import numpy as np
 from scipy import ndimage
+from scipy.interpolate import LinearNDInterpolator, griddata
+from scipy.spatial import Delaunay
 from skimage import measure
 
 # ------------------------------------------------------------------ 1. PARAMETERS
@@ -54,6 +56,11 @@ P = {
         "eyes": {"cx": 33.0, "cy": 12.0, "rx": 20.0, "ry": 12.5, "rot_deg": 8.0},
         "noseMouth": {"apex": [0.0, 8.0], "baseY": -70.0, "baseHalfWidth": 36.0, "cornerRadius": 8.0},
     },
+    # Sculpted face, in mm added to the shell. It only ever adds height, so the fit to the face can only get looser.
+    "relief": {
+        "stepUV": 2.0, "smooth": 2.0, "brow": 7.5, "bridge": 8.5, "noseWings": 5.0, "cheek": 8.0, "chin": 5.0, "dome": 3.0,
+        "socketDepth": 0.94, "socketReach": 9.0,   # falls away toward the eye, so the eye sits in a hollow
+    },
     "tiles": {
         "latticeDiagU": 24.0,                   # diamond cell width (UV mm)
         "latticeDiagV": 28.0,                   # diamond cell height (UV mm)
@@ -63,15 +70,26 @@ P = {
         "openingMargin": 3.0,                   # tiles stop this far from eye / nose openings
         "cornerRadius": 2.2,
         "minAreaFrac": 0.22,                    # drop slivers smaller than this * full cell area
-        "thickness": 3.0,
-        "undersideOffset": 2.5,                 # rest gap above shell (actuator travel space)
-        "chamfer": 0.8,                         # top edge bevel
-        "travelIn": 1.5,                        # SPACE state: tile pushed inward
-        "outlineStep": 1.2,                     # resample spacing of tile outlines
+        "thickness": 0.8,                       # petal thickness
+        "travelIn": 1.5,                        # SPACE state: petal pushed inward
+        "outlineStep": 1.2,                     # resample spacing of cell outlines
         "raster": 0.2,                          # contour raster resolution
-        "faceMeshSpacing": 3.0,                 # interior vertex spacing of the top/bottom face meshes (UV mm)
+        # One petal per diamond cell, its fullest part on the cell centre. Tips point up.
+        "petal": {
+            "ns": 44, "nt": 13,                 # grid along and across a petal
+            "length": 50.0, "width": 28.0, "fullArea": 130.0, "minScale": 0.72, "scalePower": 0.35,
+            "bloomInner": 0.95, "bloomOuter": 1.30, "bloomPower": 1.5,   # petals grow from the middle of the face to the edge
+            "flare": 1.5, "lean_deg": 4.0, "maxTurn_deg": 24.0, "bow": 2.4,
+            "base": 8.5,                        # height at the centre of the petal's lattice cell
+            # Every petal tilts the same way. Two petals that overlap then differ by the same amount everywhere, so they cannot cross.
+            "slopeV": 0.2, "slopeU": 0.09,     # mm per mm: up toward the tip, and up toward the outer edge
+            "cup": 0.35, "ruffle": 0.35, "edgeWave": 0.05,
+            "openingMargin": 0.9, "collarClearance": 1.0, "edgeMargin": -6.0,   # negative: tips pass the shell edge by this much
+            "seamClearance": 0.5, "stemClearance": 2.5,
+            "airGap": 0.2,                      # left between parts, on top of thickness and travel
+        },
     },
-    "pins": {"radius": 1.5, "height": 4.2, "baseOffset": 0.0, "minClearance": 0.2},   # visible actuator pins at lattice vertices
+    "pins": {"radius": 1.5, "height": 1.0, "baseOffset": 0.0},   # low posts at lattice vertices
     # Each form below follows a function. Sensor spots are lattice positions [i, j]: (U, V) = (i * diagU / 2, j * diagV / 2).
     "sensors": {
         "holeRadius": 4.5, "collarRadius": 6.5, "lensRadius": 4.8,   # hole in the shell, metal collar, lens
@@ -93,7 +111,7 @@ P = {
         "stemRadius": 1.2, "stemHoleRadius": 1.8, "padRadius": 3.5, "padHeight": 2.0,
         "thermalPadRadius": 7.0, "thermalZones": ["cheek_L", "cheek_R"],   # warm and cool cues need more skin
         "tipGap": 0.5,                          # pad sits this far off the skin at rest
-        "maxReach": 18.0,                       # a tile further than this from the face gets no contact
+        "maxReach": 26.0,                       # a tile further than this from the face gets no contact
         "openingMargin": 1.0,                   # pads stay this far outside the eye and nose openings
         "minPadGap": 1.0,                       # pads keep at least this far apart
         "minPerSector": 3,
@@ -101,6 +119,7 @@ P = {
 }
 S, T, O, TL = P["shell"], P["trim"], P["openings"], P["tiles"]
 SE, ST, CT = P["sensors"], P["straps"], P["contacts"]
+RF, PT = P["relief"], TL["petal"]
 R = math.radians
 A, B, C = S["a_halfWidth"], S["b_halfHeight"], S["c_depth"]
 U_MAX = A * R(S["thetaMax_deg"]); V_MIN = B * R(S["phiMin_deg"]); V_MAX = B * R(S["phiMax_deg"])
@@ -129,8 +148,8 @@ def normal_tp(theta, phi):
     return [-c for c in n] if n[2] < 0 else n
 
 def uv_to_3d(u, v, off=0.0):
-    th, ph = u / A, v / B; p = shell(th, ph); n = normal_tp(th, ph)
-    return [p[i] + n[i] * off for i in range(3)]
+    th, ph = u / A, v / B; p = shell(th, ph); n = normal_tp(th, ph); h = relief_at(u, v) + off
+    return [p[i] + n[i] * h for i in range(3)]
 
 def uv_to_front(u, v):
     p = shell(u / A, v / B); return (p[0], p[1])
@@ -213,6 +232,28 @@ def sdf_features(U, V):
     near += [sdf_segment(U, V, *slot) - ST["radius"] - ST["tileClearance"] for slot in SLOTS]
     return np.minimum.reduce(near)
 
+def make_relief():
+    Ug, Vg = np.meshgrid(RELIEF_U, RELIEF_V); X, Y = uv_to_front_np(Ug, Vg); ax = np.abs(X)
+    eye = np.maximum(np.minimum(sdf_eye(X, Y, 1), sdf_eye(X, Y, -1)), 0.0); nose = np.maximum(sdf_tri(X, Y), 0.0)
+    brow = RF["brow"] * np.exp(-((Y - (33.0 - 0.006 * (ax - 22.0) ** 2)) / 8.5) ** 2) * np.exp(-((ax - 28.0) / 36.0) ** 2)
+    bridge = RF["bridge"] * np.exp(-(X / 10.0) ** 2) * np.clip((Y - 2.0) / 10.0, 0, 1) * np.exp(-(np.maximum(Y - 26.0, 0) / 18.0) ** 2)
+    wings = RF["noseWings"] * np.exp(-(nose / 7.0) ** 2) * np.clip((Y + 52.0) / 22.0, 0, 1)
+    cheek = RF["cheek"] * np.exp(-((ax - 50.0) / 23.0) ** 2 - ((Y + 24.0) / 17.0) ** 2)
+    chin = RF["chin"] * np.exp(-(X / 28.0) ** 2 - ((Y + 84.0) / 9.0) ** 2)
+    dome = RF["dome"] * np.exp(-((Y - 64.0) / 26.0) ** 2 - (X / 46.0) ** 2)
+    socket = 1.0 - RF["socketDepth"] * np.exp(-(eye / RF["socketReach"]) ** 2)
+    raised = (np.maximum.reduce([brow, bridge, cheek]) + wings + chin + dome) * socket
+    return ndimage.gaussian_filter(raised, RF["smooth"] / RF["stepUV"])
+
+RELIEF_U = np.arange(-126.0, 128.0, RF["stepUV"]); RELIEF_V = np.arange(-136.0, 150.0, RF["stepUV"])
+RELIEF = make_relief()
+
+def relief_at(u, v):
+    """Bilinear, the same in maskGeometry.js."""
+    x = min(len(RELIEF_U) - 1.001, max(0.0, (u - RELIEF_U[0]) / RF["stepUV"])); y = min(len(RELIEF_V) - 1.001, max(0.0, (v - RELIEF_V[0]) / RF["stepUV"]))
+    i, j = int(x), int(y); a, b = x - i, y - j
+    return float(RELIEF[j, i] * (1 - a) * (1 - b) + RELIEF[j, i + 1] * a * (1 - b) + RELIEF[j + 1, i] * (1 - a) * b + RELIEF[j + 1, i + 1] * a * b)
+
 def sdf_diamond(U, V, cu, cv):
     hu, hv = TL["latticeDiagU"] / 2, TL["latticeDiagV"] / 2
     return (np.abs(U - cu) / hu + np.abs(V - cv) / hv - 1.0) * (hu * hv / math.hypot(hu, hv))
@@ -228,87 +269,9 @@ def resample_closed(pts, step):
 def area(pts):
     x, y = pts[:, 0], pts[:, 1]; return 0.5 * float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
 
-def inset_ring(pts, d):
-    """per-vertex miter offset inward by d (pts CCW, smooth)"""
-    prev, nxt = np.roll(pts, 1, 0), np.roll(pts, -1, 0)
-    t = nxt - prev; t /= np.linalg.norm(t, axis=1, keepdims=True)
-    n_in = np.stack([-t[:, 1], t[:, 0]], -1)              # left normal of CCW = inward
-    return pts + n_in * d
-
-
-def _ear_clip(P_):
-    n = len(P_); idx = list(range(n)); tris = []
-    def cross(o, a, b): return (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0])
-    def inside(p, a, b, c):
-        d1, d2, d3 = cross(a, b, p), cross(b, c, p), cross(c, a, p)
-        return not ((d1 < 0 or d2 < 0 or d3 < 0) and (d1 > 0 or d2 > 0 or d3 > 0))
-    guard = 0
-    while len(idx) > 3 and guard < 100000:
-        guard += 1; best = None
-        for k in range(len(idx)):
-            i0, i1, i2 = idx[k-1], idx[k], idx[(k+1) % len(idx)]
-            if cross(P_[i0], P_[i1], P_[i2]) <= 1e-12: continue
-            if any(inside(P_[j], P_[i0], P_[i1], P_[i2]) for j in idx if j not in (i0, i1, i2)): continue
-            # prefer the fattest ear
-            q = cross(P_[i0], P_[i1], P_[i2]) / (np.sum((P_[i0]-P_[i2])**2) + 1e-9)
-            if best is None or q > best[0]: best = (q, k, (i0, i1, i2))
-        if best is None: raise RuntimeError("ear clipping failed")
-        tris.append(best[2]); idx.pop(best[1])
-    tris.append(tuple(idx)); return tris
-
-def face_mesh(ring, spacing):
-    """Clean disc mesh of a CCW ring: ear clipping -> conforming longest-edge bisection -> Delaunay edge flips.
-    Boundary edges are never split, so the first len(ring) vertices are exactly the ring (walls attach cleanly)."""
-    pts = [np.asarray(p, float) for p in ring]; n0 = len(pts)
-    tris = [list(t) for t in _ear_clip(np.asarray(ring, float))]
-    L = lambda i, j: float(np.linalg.norm(pts[i] - pts[j]))
-    def edge_map():
-        m = {}
-        for ti, t in enumerate(tris):
-            for k in range(3):
-                e = frozenset((t[k], t[(k+1) % 3])); m.setdefault(e, []).append(ti)
-        return m
-    def flips():
-        for _ in range(20):
-            m = edge_map(); changed = False
-            for e, ts in m.items():
-                if len(ts) != 2: continue
-                i, j = tuple(e); t1, t2 = tris[ts[0]], tris[ts[1]]
-                a = [v for v in t1 if v not in e][0]; b = [v for v in t2 if v not in e][0]
-                def ang(o, p, q):
-                    u, w = pts[p]-pts[o], pts[q]-pts[o]; return math.acos(max(-1, min(1, u @ w / (np.linalg.norm(u)*np.linalg.norm(w)+1e-12))))
-                if ang(a, i, j) + ang(b, i, j) <= math.pi + 1e-9: continue
-                def cr(o, p, q): return (pts[p][0]-pts[o][0])*(pts[q][1]-pts[o][1]) - (pts[p][1]-pts[o][1])*(pts[q][0]-pts[o][0])
-                n1 = [a, b, i] if cr(a, b, i) > 0 else [a, i, b]
-                n2 = [a, b, j] if cr(a, b, j) > 0 else [a, j, b]
-                if cr(*n1) <= 1e-9 or cr(*n2) <= 1e-9: continue
-                tris[ts[0]], tris[ts[1]] = n1, n2; changed = True; break
-            if not changed: return
-    flips()
-    for _ in range(4000):
-        m = edge_map(); longest = None
-        for e, ts in m.items():
-            if len(ts) == 2:
-                l = L(*tuple(e))
-                if l > spacing * 1.25 and (longest is None or l > longest[0]): longest = (l, e, ts)
-        if longest is None: break
-        _, e, ts = longest; i, j = tuple(e)
-        pts.append((pts[i] + pts[j]) / 2); mi = len(pts) - 1
-        for ti in ts:
-            t = tris[ti]; o = [v for v in t if v not in e][0]
-            k = t.index(o); a_, b_ = t[(k+1) % 3], t[(k+2) % 3]      # keep orientation o -> a_ -> b_
-            tris[ti] = [o, a_, mi]; tris.append([o, mi, b_])
-        if _ % 25 == 24: flips()
-    flips()
-    P_ = np.asarray(pts); T_ = np.asarray(tris, int)
-    a, b, c = P_[T_[:, 0]], P_[T_[:, 1]], P_[T_[:, 2]]
-    cr = (b[:, 0]-a[:, 0])*(c[:, 1]-a[:, 1]) - (b[:, 1]-a[:, 1])*(c[:, 0]-a[:, 0])
-    assert (cr > 0).all(), "face mesh has non-CCW triangle"
-    assert abs(0.5 * cr.sum() - abs(area(np.asarray(ring)))) < 1e-6 * abs(area(np.asarray(ring))) + 1e-6, "face area mismatch"
-    return P_, T_
-
 # ------------------------------------------------------------------ 5. TILES
-def build_tiles():
+def build_cells():
+    """The diamond cells. Each gives one petal its place, sector and zone."""
     du, dv, gap, r = TL["latticeDiagU"], TL["latticeDiagV"], TL["gap"], TL["cornerRadius"]
     res = TL["raster"]; full_area = du * dv / 2
     tiles, cells = [], []
@@ -350,10 +313,7 @@ def build_tiles():
                 for _ in range(3): pts = 0.5 * pts + 0.25 * (np.roll(pts, 1, 0) + np.roll(pts, -1, 0))   # remove raster wiggle
                 pts = resample_closed(pts, TL["outlineStep"])
                 if area(pts) < 0: pts = pts[::-1]
-                top = inset_ring(pts, TL["chamfer"])
-                cen = pts.mean(0)
-                tiles.append({"cell": [i, j], "piece": k, "outlineUV": pts, "topUV": top, "centroidUV": cen,
-                              "areaUV": abs(area(pts))})
+                tiles.append({"cell": [i, j], "piece": k, "centroidUV": pts.mean(0), "areaUV": abs(area(pts))})
             cells.append((cu, cv))
     # IDs: lattice row from top, then left -> right
     tiles.sort(key=lambda t: (-t["cell"][1], t["centroidUV"][0]))
@@ -365,19 +325,10 @@ def build_tiles():
         out.append({
             "id": f"T{rI:02d}-{cI:02d}", "row": rI, "col": cI, "cell": t["cell"],
             "centroidUV": [round(cu, 3), round(cv, 3)], "centroid2D": [round(fx, 3), round(fy, 3)],
-            "centroid3D": [round(x, 3) for x in uv_to_3d(cu, cv, TL["undersideOffset"] + TL["thickness"])],
             "normal": [round(x, 5) for x in normal_tp(cu / A, cv / B)],
-            "areaUV": round(float(t["areaUV"]), 2),
-            "sector": sector_of(fx, fy), "zone": zone_of(fx, fy),
-            "outlineUV": [[round(float(a), 3), round(float(b), 3)] for a, b in t["outlineUV"]],
-            "topUV": [[round(float(a), 3), round(float(b), 3)] for a, b in t["topUV"]],
-            "topFace": mesh_json(t["topUV"]), "bottomFace": mesh_json(t["outlineUV"]),
+            "cellAreaUV": round(float(t["areaUV"]), 2), "sector": sector_of(fx, fy), "zone": zone_of(fx, fy),
         })
     return out
-
-def mesh_json(ring):
-    pts, tri = face_mesh(ring, TL["faceMeshSpacing"])
-    return {"uv": [[round(float(a), 3), round(float(b), 3)] for a, b in pts], "tris": tri.astype(int).tolist()}
 
 def sector_of(x, y):
     a = math.degrees(math.atan2(y - O["eyes"]["cy"], x)) % 360
@@ -391,8 +342,149 @@ def zone_of(x, y):
     if abs(x) > 50: return "temple_R" if x > 0 else "temple_L"
     return "centre"
 
-# ------------------------------------------------------------------ 6. PINS (visible at lattice vertices)
-def build_pins(tiles):
+# ------------------------------------------------------------------ 5b. PETALS
+def room(p):
+    """Free distance at a UV point, right half: clear of openings, sensors, strap slots, the edge and the centre seam."""
+    U, V = np.array([[p[0]]]), np.array([[p[1]]]); X, Y = uv_to_front_np(U, V)
+    return min(float(sdf_openings_front(X, Y)[0, 0]) - PT["openingMargin"], float(sdf_features(U, V)[0, 0]) + SE["tileClearance"] - PT["collarClearance"],
+               -float(sdf_trim(U, V)[0, 0]) - PT["edgeMargin"], p[0] - PT["seamClearance"])
+
+def upright(u, v, lean):
+    """Surface direction that reads as upright from the front, whatever the curve of the shell does to the UV lines."""
+    e = 0.5; x0, y0 = uv_to_front(u, v); xu, yu = uv_to_front(u + e, v); xv, yv = uv_to_front(u, v + e)
+    J = np.array([[xu - x0, xv - x0], [yu - y0, yv - y0]]) / e
+    d = np.linalg.solve(J, np.array([math.sin(lean), math.cos(lean)])); d = d / np.hypot(*d)
+    limit = R(PT["maxTurn_deg"]); a = max(-limit, min(limit, math.atan2(d[0], d[1])))
+    return np.array([math.sin(a), math.cos(a)])
+
+def petal_shape(c, L, W, idx, lattice):
+    """UV grid and offsets of one petal. Tip, base and both edges stop short of whatever must stay clear."""
+    cu, cv = c; c = np.array(c, float)
+    free = lambda q: room(q) >= 0
+    rho = min(1.0, math.hypot(cu / T["halfU"], (cv - 14.0) / T["halfV"]))
+    d = upright(cu, cv, R(PT["lean_deg"]) * cu / T["halfU"])
+    up, down = 0.58 * L, 0.42 * L
+    for a in np.arange(0.5, up + 0.5, 0.5):
+        if not free(c + d * a): up = a - 0.5; break
+    for a in np.arange(0.5, down + 0.5, 0.5):
+        if not free(c - d * a): down = a - 0.5; break
+    span = up + down
+    if span < 4: return None
+    ns, nt = PT["ns"], PT["nt"]; s = np.linspace(0, 1, ns); sideways = np.array([d[1], -d[0]])
+    bow = PT["bow"] * L / PT["length"] * math.sin(idx * 2.4)
+    fine = np.linspace(0, 1, 121); line = c - d * down + np.outer(fine * span, d) + np.outer(np.sin(math.pi * fine) * bow, sideways)
+    clear = np.array([free(q) for q in line])                         # the curved centre line must stay clear too
+    if clear.sum() < 2: return None
+    mid = int(np.argmin(np.abs(fine - down / span)))
+    lo = max([k for k in range(mid + 1) if not clear[k]], default=-1) + 1
+    hi = min([k for k in range(mid, 121) if not clear[k]], default=121) - 1
+    if hi <= lo: return None
+    spine = np.stack([np.interp(fine[lo] + s * (fine[hi] - fine[lo]), fine, line[:, a]) for a in (0, 1)], -1)
+    span *= fine[hi] - fine[lo]
+    if span < 4: return None
+    nor = np.stack([-d[1] * np.ones(ns), d[0] * np.ones(ns)], -1)
+    prof = np.sin(math.pi * s ** 0.82) ** 0.85; prof = prof / prof.max()   # soft shoulders, gently narrowing tip
+    wave = 1 + PT["edgeWave"] * np.sin(s * 9 + idx * 1.7) * prof
+    half = []
+    for sign in (1, -1):
+        w = W / 2 * prof * wave
+        for i in range(ns):
+            for e in np.arange(0.25, w[i] + 0.25, 0.25):
+                if not free(spine[i] + sign * nor[i] * e):
+                    w[i] = max(0.2, e - 0.25); break
+        half.append(np.maximum(np.minimum(ndimage.gaussian_filter1d(w, 2.0, mode="nearest") * prof ** 0.12, w + 0.15), 0.25))   # the ends stay a real edge, so the solid closes
+    uv = np.zeros((ns, nt, 2)); off = np.zeros((ns, nt)); tt = np.linspace(-1, 1, nt)
+    for i in range(ns):
+        local = (W / 2 * prof[i]) / 14
+        for j in range(nt):
+            q = tt[j]; uv[i, j] = spine[i] + nor[i] * q * (half[0][i] if q >= 0 else half[1][i])
+            off[i, j] = PT["cup"] * q * q * local + PT["ruffle"] * math.sin(s[i] * 8 + idx * 2.1) * q * q * local
+            off[i, j] += (PT["base"] + PT["slopeV"] * (uv[i, j, 1] - lattice[1]) + PT["slopeU"] * (abs(uv[i, j, 0]) - abs(lattice[0])) + PT["flare"] * rho * rho * s[i] ** 3)
+    return {"tint": idx, "cu": cu, "cv": cv, "lattice": lattice, "uv": uv, "off": off, "size": round(L / PT["length"], 2),
+            "length": round(float(span), 1), "width": round(float(half[0].max() + half[1].max()), 1)}
+
+def moving_petal(t, idx):
+    cu, cv = t["centroidUV"]; rho = min(1.0, math.hypot(cu / T["halfU"], (cv - 14.0) / T["halfV"]))
+    k = max(PT["minScale"], min(1.0, (t["cellAreaUV"] / PT["fullArea"]) ** PT["scalePower"]))
+    k = (k + (1 - k) * max(0.0, (rho - 0.75) / 0.25)) * (PT["bloomInner"] + (PT["bloomOuter"] - PT["bloomInner"]) * rho ** PT["bloomPower"])
+    lattice = (t["cell"][0] * TL["latticeDiagU"] / 2, t["cell"][1] * TL["latticeDiagV"] / 2)      # measured from the lattice, so a clipped cell keeps its place in the stack
+    p = petal_shape((cu, cv), PT["length"] * k, PT["width"] * k, idx, lattice); assert p, f"no room for a petal on {t['id']}"
+    p["tile"] = t
+    return p
+
+def ring_of(p):
+    return np.vstack([p["uv"][:, 0], p["uv"][::-1, -1]])
+
+def stack_order(p):
+    """Bottom first: the top of the mask down and the outside in. Lower petals lie over upper ones, inner over outer."""
+    return (-float(p["lattice"][1]), -abs(float(p["lattice"][0])))
+
+def pick_anchor(p, lower):
+    """Where the stem leaves: deep inside this petal, with no lower petal in its way. On a 0.5 grid, so left mirrors right."""
+    ring = ring_of(p); lo, hi = np.floor(ring.min(0) * 2) / 2, np.ceil(ring.max(0) * 2) / 2
+    grid = np.stack(np.meshgrid(np.arange(lo[0], hi[0], 0.5), np.arange(lo[1], hi[1], 0.5)), -1).reshape(-1, 2)
+    grid = grid[measure.points_in_poly(grid, ring)]
+    grid = grid[np.linalg.norm(grid[:, None] - ring[None], axis=2).min(1) >= PT["stemClearance"]]
+    for o in lower:
+        if not len(grid): break
+        other = ring_of(o)
+        grid = grid[~measure.points_in_poly(grid, other) & (np.linalg.norm(grid[:, None] - other[None], axis=2).min(1) >= PT["stemClearance"])]
+    if not len(grid): return None
+    return grid[int(np.linalg.norm(grid - np.array([p["cu"], p["cv"]]), axis=1).argmin())]
+
+G_STEP = 0.5
+GRID_U = np.arange(-20.0, 140.0, G_STEP); GRID_V = np.arange(-150.0, 160.0, G_STEP)
+
+def raster(p, off=None):
+    """Height of a petal on the shared grid, as a window into it."""
+    uv = p["uv"]; pts = uv.reshape(-1, 2)
+    i0 = max(int((pts[:, 0].min() - GRID_U[0]) / G_STEP) - 8, 0); i1 = min(int((pts[:, 0].max() - GRID_U[0]) / G_STEP) + 9, len(GRID_U))
+    j0 = max(int((pts[:, 1].min() - GRID_V[0]) / G_STEP) - 8, 0); j1 = min(int((pts[:, 1].max() - GRID_V[0]) / G_STEP) + 9, len(GRID_V))
+    X, Y = np.meshgrid(GRID_U[i0:i1], GRID_V[j0:j1]); ring = ring_of(p)
+    mask = measure.grid_points_in_poly(X.shape, np.stack([(ring[:, 1] - GRID_V[j0]) / G_STEP, (ring[:, 0] - GRID_U[i0]) / G_STEP], -1))
+    mask = ndimage.binary_dilation(mask, iterations=2)                # includes the rim
+    vals = (p["off"] if off is None else off).reshape(-1)
+    if "mesh" not in p: p["mesh"] = Delaunay(pts)                     # the outline never changes, only the heights
+    H = LinearNDInterpolator(p["mesh"], vals)(X, Y)
+    return (j0, j1, i0, i1), mask, np.where(np.isnan(H), griddata(pts, vals, (X, Y), method="nearest"), H)
+
+def group_of(p):
+    """Petals in one sector and zone move together, so they only need to clear each other's thickness."""
+    return (p["tile"]["sector"], p["tile"]["zone"])
+
+def clearance_to(p, other):
+    """Top to top. Across groups a petal also keeps its travel, because the one beneath may stay where it is."""
+    return TL["thickness"] + PT["airGap"] + (TL["travelIn"] if group_of(p) != other else 0.0)
+
+def stack(petals, posts):
+    """Lay petals one at a time. Each stays where its tilt puts it, and rises only where it would otherwise meet what is beneath."""
+    floor = np.zeros((len(GRID_V), len(GRID_U)))
+    gx, gy = np.meshgrid(GRID_U, GRID_V)
+    for u, v in posts: floor = np.where(np.hypot(gx - u, gy - v) < P["pins"]["radius"] + 0.3, P["pins"]["height"], floor)
+    tops = {"floor": floor}
+    for rank, p in enumerate(sorted(petals, key=stack_order)):
+        p["rank"] = rank
+        (j0, j1, i0, i1), mask, H = raster(p); g = group_of(p)
+        need = np.zeros(H.shape)
+        for other, E in tops.items(): need = np.maximum(need, np.where(mask, E[j0:j1, i0:i1] + clearance_to(p, other) - H, 0.0))
+        lift = ndimage.gaussian_filter(ndimage.maximum_filter(need, size=13), 3.0)      # wider than the grid, so no lift falls between its points
+        p["off"] = p["off"] + ndimage.map_coordinates(lift, [(p["uv"][..., 1] - GRID_V[j0]) / G_STEP, (p["uv"][..., 0] - GRID_U[i0]) / G_STEP], order=1, mode="nearest")
+        E = tops.setdefault(g, np.zeros(floor.shape)); E[j0:j1, i0:i1] = np.where(mask, np.maximum(E[j0:j1, i0:i1], H + lift), E[j0:j1, i0:i1])
+
+def mirrored(p, tint_shift=37):
+    return {**{k: v for k, v in p.items() if k != "mesh"}, "cu": -p["cu"], "uv": (p["uv"] * [-1, 1])[:, ::-1], "off": p["off"][:, ::-1], "tint": p["tint"] + tint_shift}
+
+def flat(a):
+    return [round(float(x), 2) for x in a.reshape(-1)]
+
+def petal_json(p):
+    return {"uv": flat(p["uv"]), "off": flat(p["off"]), "rank": p["rank"], "tint": p["tint"], "size": p["size"]}
+
+def offset_at(p, u, v):
+    return float(griddata(p["uv"].reshape(-1, 2), p["off"].reshape(-1), (u, v), method="linear"))
+
+# ------------------------------------------------------------------ 6. PINS (low posts at lattice vertices)
+def build_pins(cells):
     du, dv = TL["latticeDiagU"], TL["latticeDiagV"]; pins = []
     for j in range(int(V_MIN / (dv / 2)) - 2, int(V_MAX / (dv / 2)) + 3):
         for i in range(-int(U_MAX / (du / 2)) - 2, int(U_MAX / (du / 2)) + 3):
@@ -402,14 +494,9 @@ def build_pins(tiles):
             if sdf_trim(Ug, Vg)[0, 0] > -TL["edgeMargin"] - 2 or sdf_shell_rect(Ug, Vg)[0, 0] > -2: continue
             if sdf_openings_front(X, Y)[0, 0] < TL["openingMargin"] + 1: continue
             if sdf_features(Ug, Vg)[0, 0] < P["pins"]["radius"]: continue
-            # keep only where at least 2 tiles meet around it
-            near = sum(1 for t in tiles if abs(t["centroidUV"][0] - u) < du * 0.6 and abs(t["centroidUV"][1] - v) < dv * 0.6)
-            if near < 2: continue
-            # clearance: pin must not touch any tile outline (UV distance)
-            pc = np.array([u, v]); clear = min(float(np.min(np.linalg.norm(np.array(t["outlineUV"]) - pc, axis=1)))
-                                              for t in tiles if abs(t["centroidUV"][0] - u) < du and abs(t["centroidUV"][1] - v) < dv)
-            if clear < P["pins"]["radius"] + P["pins"]["minClearance"]: continue
-            pins.append({"clearance": round(clear, 3), "id": f"N{len(pins):03d}", "uv": [round(u, 3), round(v, 3)], "p2D": [round(float(X[0,0]), 3), round(float(Y[0,0]), 3)],
+            near = sum(1 for t in cells if abs(t["centroidUV"][0] - u) < du * 0.6 and abs(t["centroidUV"][1] - v) < dv * 0.6)
+            if near < 2: continue                             # keep only where at least 2 cells meet around it
+            pins.append({"id": f"N{len(pins):03d}", "uv": [round(u, 3), round(v, 3)], "p2D": [round(float(X[0,0]), 3), round(float(Y[0,0]), 3)],
                          "base3D": [round(x, 3) for x in uv_to_3d(u, v, P["pins"]["baseOffset"])],
                          "normal": [round(x, 5) for x in normal_tp(u / A, v / B)]})
     return pins
@@ -493,19 +580,11 @@ def build_sensors():
                     "normal": [round(x, 5) for x in n], "facingDeg": round(math.degrees(math.acos(n[2])), 1)})
     return out
 
-def tile_anchor(outline):
-    """Deepest point inside a tile, so the stem stays clear of its edges even on clipped tiles."""
-    lo, hi = np.floor(outline.min(0) * 2) / 2, np.ceil(outline.max(0) * 2) / 2      # grid on 0.5 multiples, so it mirrors
-    grid = np.stack(np.meshgrid(np.arange(lo[0], hi[0], 0.5), np.arange(lo[1], hi[1], 0.5)), -1).reshape(-1, 2)
-    grid = grid[measure.points_in_poly(grid, outline)]
-    depth = np.linalg.norm(grid[:, None] - outline[None], axis=2).min(1)
-    deep = grid[depth > depth.max() - 0.5]                                           # diamonds have a flat ridge of equal depth
-    return deep[int(np.linalg.norm(deep - outline.mean(0), axis=1).argmin())]
-
 def build_contacts(tiles):
     z_at = reference_face(); out = []
     for t in tiles:
-        u, v = (float(x) for x in tile_anchor(np.array(t["outlineUV"])))
+        if t["anchorUV"] is None: continue
+        u, v = t["anchorUV"]; under = t["underOffset"]
         n = np.array(normal_tp(u / A, v / B)); start = np.array(uv_to_3d(u, v, -S["thickness"]))
         reach = next((d for d in np.arange(0.0, CT["maxReach"], 0.05)
                       if (start - n * d)[2] <= z_at(*(start - n * d)[:2])), None)
@@ -515,8 +594,8 @@ def build_contacts(tiles):
         thermal = t["zone"] in CT["thermalZones"] and room >= CT["thermalPadRadius"]
         if room < CT["padRadius"]: continue
         out.append({"id": "C" + t["id"][1:], "tile": t["id"], "uv": [round(u, 3), round(v, 3)], "sector": t["sector"], "zone": t["zone"],
-                    "base3D": [round(x, 3) for x in uv_to_3d(u, v, TL["undersideOffset"])], "axis": [round(float(x), 5) for x in -n],
-                    "length": round(TL["undersideOffset"] + S["thickness"] + float(reach) - CT["tipGap"], 2),
+                    "base3D": [round(x, 3) for x in uv_to_3d(u, v, under)], "axis": [round(float(x), 5) for x in -n],
+                    "length": round(under + S["thickness"] + float(reach) - CT["tipGap"], 2),
                     "padRadius": CT["thermalPadRadius"] if thermal else CT["padRadius"], "thermal": bool(thermal), "reach": round(float(reach), 2),
                     "tileArea": t["areaUV"]})
     return settle_pads(out)
@@ -551,10 +630,128 @@ def contact_report(contacts):
             "smallestPadGap": round(room, 2), "skinPress": round(TL["travelIn"] - CT["tipGap"], 2),
             "lengthRange": [min(c["length"] for c in contacts), max(c["length"] for c in contacts)]}
 
+# ------------------------------------------------------------------ 10. CHECKS ON THE FINISHED PETALS
+def triangles(g):
+    a = g[:-1, :-1].reshape(-1, 3); b = g[1:, :-1].reshape(-1, 3); c = g[:-1, 1:].reshape(-1, 3); d = g[1:, 1:].reshape(-1, 3)
+    return np.vstack([a, b]), np.vstack([b, d]), np.vstack([c, c])
+
+def rim_of(g):
+    r = np.vstack([g[:, 0], g[::-1, -1]]); return r[:-1], r[1:]
+
+def segment_hits(p0, p1, a, b, c):
+    """Segments passing through triangles (Moller-Trumbore), all against all."""
+    e1, e2 = b - a, c - a; d = p1 - p0; count = 0
+    for s0, sd in zip(p0, d):
+        h = np.cross(sd, e2); det = np.sum(e1 * h, axis=1); ok = np.abs(det) > 1e-9
+        f = np.zeros_like(det); f[ok] = 1 / det[ok]
+        t0 = s0 - a; u = f * np.sum(t0 * h, axis=1); q = np.cross(t0, e1); v = f * np.sum(sd * q, axis=1); w = f * np.sum(e2 * q, axis=1)
+        count += int(np.sum(ok & (u >= 0) & (v >= 0) & (u + v <= 1) & (w >= 0) & (w <= 1)))
+    return count
+
+def to_3d(p):
+    g = np.zeros(p["uv"].shape[:2] + (3,))
+    for i in range(g.shape[0]):
+        for j in range(g.shape[1]):
+            g[i, j] = uv_to_3d(float(p["uv"][i, j, 0]), float(p["uv"][i, j, 1]), float(p["off"][i, j]))
+    return g
+
+def rim_crossings(everyone):
+    """Any rim that passes through another petal's surface, in true 3D."""
+    grids = [to_3d(p) for p in everyone]
+    boxes = [(g.reshape(-1, 3).min(0) - 0.01, g.reshape(-1, 3).max(0) + 0.01) for g in grids]; found = 0
+    for i, g in enumerate(grids):
+        p0, p1 = rim_of(g)
+        for j, o in enumerate(grids):
+            lo, hi = np.maximum(boxes[i][0], boxes[j][0]), np.minimum(boxes[i][1], boxes[j][1])
+            if i == j or np.any(hi < lo): continue
+            keep = np.all((np.maximum(p0, p1) >= lo) & (np.minimum(p0, p1) <= hi), axis=1)
+            if not keep.any(): continue
+            a, b, c = triangles(o)
+            near = np.all((np.maximum.reduce([a, b, c]) >= lo) & (np.minimum.reduce([a, b, c]) <= hi), axis=1)
+            if near.any() and segment_hits(p0[keep], p1[keep], a[near], b[near], c[near]): found += 1
+    return found
+
+def pushed_gap(right_half):
+    """Smallest air gap between any petal and what lies beneath it, with a moving petal pushed in and the other group left at rest."""
+    best = 1e9
+    rs = [(p, *raster(p)) for p in sorted(right_half, key=stack_order)]
+    for i, (p, (j0, j1, i0, i1), m, H) in enumerate(rs):
+        for o, (a0, a1, b0, b1), n, K in rs[:i]:
+            r0, r1, c0, c1 = max(j0, a0), min(j1, a1), max(i0, b0), min(i1, b1)
+            if r0 >= r1 or c0 >= c1: continue
+            both = m[r0 - j0:r1 - j0, c0 - i0:c1 - i0] & n[r0 - a0:r1 - a0, c0 - b0:c1 - b0]
+            if both.any():
+                gap = H[r0 - j0:r1 - j0, c0 - i0:c1 - i0] - clearance_to(p, group_of(o)) + PT["airGap"] - K[r0 - a0:r1 - a0, c0 - b0:c1 - b0]
+                best = min(best, float(gap[both].min()))
+    return round(best, 2)
+
+def petals_beneath(right_half):
+    """For each petal, how far it can go in on its own before it meets each petal lying under it."""
+    out = {}
+    rs = [(p, *raster(p)) for p in sorted(right_half, key=stack_order)]
+    for i, (p, (j0, j1, i0, i1), m, H) in enumerate(rs):
+        row = out.setdefault(p["tile"]["id"], [])
+        for o, (a0, a1, b0, b1), n, K in rs[:i]:
+            r0, r1, c0, c1 = max(j0, a0), min(j1, a1), max(i0, b0), min(i1, b1)
+            if r0 >= r1 or c0 >= c1: continue
+            both = m[r0 - j0:r1 - j0, c0 - i0:c1 - i0] & n[r0 - a0:r1 - a0, c0 - b0:c1 - b0]
+            if both.any():
+                gap = H[r0 - j0:r1 - j0, c0 - i0:c1 - i0] - TL["thickness"] - K[r0 - a0:r1 - a0, c0 - b0:c1 - b0]
+                row.append([o["tile"]["id"], round(float(gap[both].min()), 2)])
+    return out
+
+def coverage(everyone):
+    cu = np.arange(-112.0, 112.0, 0.5); cv = np.arange(-118.0, 130.0, 0.5); Ug, Vg = np.meshgrid(cu, cv); X, Y = uv_to_front_np(Ug, Vg)
+    solid = (sdf_trim(Ug, Vg) < 0) & (sdf_shell_rect(Ug, Vg) < 0) & (sdf_openings_front(X, Y) > 0) & (sdf_features(Ug, Vg) + SE["tileClearance"] > 0)
+    covered = np.zeros(Ug.shape, bool)
+    for p in everyone:
+        ring = ring_of(p)
+        covered |= measure.grid_points_in_poly(Ug.shape, np.stack([(ring[:, 1] - cv[0]) / 0.5, (ring[:, 0] - cu[0]) / 0.5], -1))
+    return round(float((covered & solid).sum() / solid.sum()) * 100, 1)
+
+def sensor_view(everyone, sensors):
+    """How far off its axis each sensor can see before a petal gets in the way. 90 = nothing above the lens."""
+    out = {}
+    for s in sensors:
+        c = np.array(s["base3D"]); n = np.array(s["normal"]); lens = c + n * SE["lensTop"]; best = 90.0
+        for p in everyone:
+            if abs(p["cu"] - s["uv"][0]) > 70 or abs(p["cv"] - s["uv"][1]) > 70: continue
+            g = p["grid"].reshape(-1, 3) - lens; h = g @ n; side = np.linalg.norm(g - np.outer(h, n), axis=1); up = h > 0
+            if up.any(): best = min(best, float(np.degrees(np.arctan2(side[up], h[up])).min()))
+        out[s["id"]] = round(best, 1)
+    return out
+
 # ------------------------------------------------------------------ main
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    tiles = build_tiles(); pins = build_pins(tiles); sensors = build_sensors(); contacts = build_contacts(tiles)
+    cells = build_cells(); pins = build_pins(cells); sensors = build_sensors()
+    right = [t for t in cells if t["centroidUV"][0] > 0]
+    assert len(right) * 2 == len(cells)
+    tops = [moving_petal(t, i) for i, t in enumerate(right)]
+    ordered = sorted(tops, key=stack_order)
+    for i, p in enumerate(ordered): p["anchor"] = pick_anchor(p, ordered[:i])
+    stack(tops, [n["uv"] for n in pins if n["uv"][0] >= 0])
+
+    left = [t for t in cells if t["centroidUV"][0] < 0]
+    def finish(t, p, anchor):
+        ring = ring_of(p); cu, cv = t["centroidUV"]
+        return {**t, "areaUV": round(abs(area(ring)), 2), "outlineUV": [[round(float(a), 3), round(float(b), 3)] for a, b in ring],
+                "centroid3D": [round(x, 3) for x in uv_to_3d(cu, cv, offset_at(p, cu, cv))],
+                "anchorUV": None if anchor is None else [float(anchor[0]), float(anchor[1])],
+                "underOffset": None if anchor is None else round(offset_at(p, float(anchor[0]), float(anchor[1])) - TL["thickness"], 2),
+                "petal": petal_json(p)}
+    tiles = []; everyone = []; twins = {}
+    for p in tops:
+        t = p["tile"]; twin = min(left, key=lambda o: abs(o["centroidUV"][0] + t["centroidUV"][0]) + abs(o["centroidUV"][1] - t["centroidUV"][1]))
+        q = mirrored(p); a = p["anchor"]; twins[t["id"]] = twin["id"]
+        tiles += [finish(t, p, a), finish(twin, q, None if a is None else a * [-1, 1])]; everyone += [p, q]
+    tiles.sort(key=lambda t: t["id"])
+    under = petals_beneath(tops)
+    for t in tiles:
+        side = next((k for k, v in twins.items() if v == t["id"]), None)
+        t["beneath"] = [[twins[i], g] for i, g in under[side]] if side else under[t["id"]]
+    contacts = build_contacts(tiles)
+    for p in everyone: p["grid"] = to_3d(p)
     trim_uv = trim_poly_uv(); trim_2d = [uv_to_front(u, v) for u, v in trim_uv]
     openings_2d = {"eye_L": eye_poly(-1), "eye_R": eye_poly(1), "noseMouth": tri_poly()}
     xs = [p[0] for p in trim_2d]; ys = [p[1] for p in trim_2d]
@@ -563,13 +760,22 @@ if __name__ == "__main__":
                     "overallWidth": round(max(xs) - min(xs), 2), "overallHeight": round(max(ys) - min(ys), 2),
                     "overallDepth": round(-min(zs), 2), "Y_MIN": round(min(ys), 3), "Y_MAX": round(max(ys), 3),
                     "tileCount": len(tiles), "pinCount": len(pins), "sensorCount": len(sensors), "contactCount": len(contacts),
-                    "fit": fit_report(), "contacts": contact_report(contacts)}
+                    "fit": fit_report(), "contacts": contact_report(contacts),
+                    "petals": {"rimCrossings": rim_crossings(everyone), "pushedGap": pushed_gap(tops), "coverPercent": coverage(everyone),
+                               "highestAboveShell": round(max(float(p["off"].max()) for p in everyone), 2),
+                               "highestTotal": round(max(float((p["off"] + np.vectorize(relief_at)(p["uv"][..., 0], p["uv"][..., 1])).max()) for p in everyone), 2), "reliefMax": round(float(RELIEF.max()), 2),
+                               "length": [min(p["length"] for p in tops), max(p["length"] for p in tops)], "width": [min(p["width"] for p in tops), max(p["width"] for p in tops)],
+                               "sensorViewDeg": sensor_view(everyone, sensors), "tilesWithoutStem": sum(t["anchorUV"] is None for t in tiles)}}
+    assert P["derived"]["petals"]["rimCrossings"] == 0, "a petal passes through another"
+    assert P["derived"]["petals"]["pushedGap"] >= 0.0, "a pushed petal would hit the one beneath"
     P["outlines"] = {
         "trimUV": [[round(a, 3), round(b, 3)] for a, b in trim_uv],
         "trim2D": [[round(a, 3), round(b, 3)] for a, b in trim_2d],
         "openings2D": {k: [[round(a, 3), round(b, 3)] for a, b in v] for k, v in openings_2d.items()},
         "openingsUV": {k: [[round(c, 3) for c in front_to_uv(a, b)] for a, b in v] for k, v in openings_2d.items()},
         # holes through the shell, each a capsule [U0, V0, U1, V1, radius]
+        "reliefUV": {"u0": float(RELIEF_U[0]), "v0": float(RELIEF_V[0]), "step": RF["stepUV"], "nu": len(RELIEF_U), "nv": len(RELIEF_V),
+                     "data": [round(float(x), 2) for x in RELIEF.reshape(-1)]},
         "holesUV": [[*s["uv"], *s["uv"], SE["holeRadius"]] for s in sensors] + [[*slot, ST["radius"]] for slot in SLOTS]
                    + [[*c["uv"], *c["uv"], CT["stemHoleRadius"]] for c in contacts],
     }

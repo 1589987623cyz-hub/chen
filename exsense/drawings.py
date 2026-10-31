@@ -54,9 +54,11 @@ class View:
                 f"<line x1='{x-6}' y1='{y2}' x2='{x+6}' y2='{y2}'/></g><text x='{x-6}' y='{(y1+y2)/2}' font-size='12' text-anchor='middle' "
                 f"transform='rotate(-90 {x-6} {(y1+y2)/2})' {FONT}>{esc(label)}</text>")
 
-def tile_3d(t, key="topUV", off=None):
-    TL = G.TL; off = TL["undersideOffset"] + TL["thickness"] if off is None else off
-    return [G.uv_to_3d(u, v, off) for u, v in t[key][::2]]
+def tile_3d(t):
+    """Top rim of a petal in 3D, at its own stacked height."""
+    ns, nt = G.PT["ns"], G.PT["nt"]; uv = np.array(t["petal"]["uv"]).reshape(ns, nt, 2); off = np.array(t["petal"]["off"]).reshape(ns, nt)
+    ring = [(i, 0) for i in range(ns)] + [(i, nt - 1) for i in range(ns - 1, -1, -1)]
+    return [G.uv_to_3d(float(uv[i, j, 0]), float(uv[i, j, 1]), float(off[i, j])) for i, j in ring]
 
 def shell_grid():
     lines = []
@@ -81,12 +83,11 @@ def make_all(P, tiles, pins, sensors, contacts):
     opUV = {k: [tuple(q) for q in v] for k, v in P["outlines"]["openingsUV"].items()}
 
     # ---------------------------------------------------------- 01 FRONT (zones + dims)
-    sh = Sheet("01  FRONT VIEW — tiles, openings, dimensions"); v = View(540, 480)
-    sh.add(v.poly(trim2, True, INK, 1.6, "#2b2b2b"))
+    sh = Sheet("01  FRONT VIEW — petals, openings, dimensions"); v = View(540, 480)
+    sh.add(v.poly(trim2, True, INK, 1.6, "#dcbcb0"))
     for poly in op2.values(): sh.add(v.poly(poly, True, INK, 1.2, "#fff"))
-    for t in sorted(tiles, key=lambda t: tile_3d(t)[0][2]):
+    for t in sorted(tiles, key=lambda t: t["petal"]["rank"]):
         sh.add(v.poly([(q[0], q[1]) for q in tile_3d(t)], True, INK, 0.8, ZONE_FILL[t["zone"]]))
-    for n in pins: sh.add(v.circle(*n["p2D"], P["pins"]["radius"], "#9a9a9a"))
     SE, ST, CT = P["sensors"], P["straps"], P["contacts"]
     for slot in G.SLOTS: sh.add(v.poly([G.uv_to_front(a, b) for a, b in capsule(*slot, ST["radius"])], True, INK, 1, "#fff"))
     for s in sensors:
@@ -102,24 +103,24 @@ def make_all(P, tiles, pins, sensors, contacts):
     sh.add(v.dim_v(m["baseY"], m["apex"][1], W/2, f"{m['apex'][1]-m['baseY']:.0f}", 30))
     sh.add(v.dim_v(e["cy"] - e["ry"], e["cy"] + e["ry"], W/2, f"eye {2*e['ry']:.0f}", 60))
     sh.notes(["NOTES",
-              f"Shell: dark base, outline = superellipse in UV (n={P['trim']['exponent']})",
+              f"Shell: outline = superellipse in UV (n={P['trim']['exponent']}), sculpted relief up to {D['petals']['reliefMax']}",
               f"Eyes: ellipse rx {e['rx']} ry {e['ry']} at (±{e['cx']}, {e['cy']}), rot ±{e['rot_deg']}°",
               f"Nose/mouth: rounded triangle, apex (0,{m['apex'][1]}), base y {m['baseY']}, r {m['cornerRadius']}",
-              f"Tiles: diamond lattice {TL['latticeDiagU']}×{TL['latticeDiagV']} (UV), gap {TL['gap']}",
-              f"Tiles clipped {TL['edgeMargin']} from outline, {TL['openingMargin']} from openings",
-              f"Corner radius {TL['cornerRadius']}, thickness {TL['thickness']}, chamfer {TL['chamfer']}",
-              f"Grey dots = actuator pins at lattice vertices, r {P['pins']['radius']}",
-              f"Tiles: {D['tileCount']}   Pins: {D['pinCount']}   Contacts: {D['contactCount']}",
+              f"Petals: one per diamond cell {TL['latticeDiagU']}×{TL['latticeDiagV']} (UV), tips up",
+              f"Length {D['petals']['length'][0]}–{D['petals']['length'][1]}, width {D['petals']['width'][0]}–{D['petals']['width'][1]}, thickness {TL['thickness']}",
+              f"Petals drawn in stacking order, lower ones on top",
+              f"Petals cover {D['petals']['coverPercent']}% of the shell",
+              f"Petals: {D['tileCount']}   Posts: {D['pinCount']}   Contacts: {D['contactCount']}",
               f"Blue = 8 distance windows, red = UV, black = air in / out",
               f"White slots = 4 strap slots, r {ST['radius']}",
               "", "ZONE COLOURS (for thermal / state mapping)"])
     for i, (z, c) in enumerate(ZONE_FILL.items()):
         y = 110 + 14 * 21 + i * 22
         sh.add(f"<rect x='1000' y='{y-12}' width='18' height='14' fill='{c}' stroke='{INK}' stroke-width='0.6'/><text x='1026' y='{y}' font-size='12' {FONT}>{z}</text>")
-    sh.save("drawings/01_front.svg", "Tile top surfaces projected to the front plane")
+    sh.save("drawings/01_front.svg", "Petal top rims projected to the front plane")
 
     # ---------------------------------------------------------- 02 FRONT IDs
-    sh = Sheet("02  FRONT VIEW — tile IDs (match tiles.json)"); v = View(540, 480)
+    sh = Sheet("02  FRONT VIEW — petal IDs (match tiles.json)"); v = View(540, 480)
     sh.add(v.poly(trim2, True, MUTED, 1, "#f4f4f2"))
     for poly in op2.values(): sh.add(v.poly(poly, True, MUTED, 1, "#fff"))
     for t in tiles:
@@ -128,8 +129,8 @@ def make_all(P, tiles, pins, sensors, contacts):
     sh.add(v.axes("+X", "+Y"))
     sh.notes(["ID RULE", "T<row>-<col>", "row = lattice row counted from top", "col = left → right within the row",
               "a lattice cell split by the centre seam", "gives two tiles in the same row", "",
-              "Each tile in tiles.json carries:", "outlineUV  (base outline, CCW)", "topUV      (top face, inset by chamfer)",
-              "centroidUV / centroid2D / centroid3D", "normal, sector, zone"], mono=True)
+              "Each tile in tiles.json carries:", "petal      (uv, off, rank, tint, size)", "outlineUV  (petal outline in UV)",
+              "anchorUV   (where its stem leaves)", "centroidUV / centroid2D / centroid3D", "normal, sector, zone"], mono=True)
     sh.save("drawings/02_front_ids.svg", "Tile IDs")
 
     # ---------------------------------------------------------- 03 SIDE
@@ -165,39 +166,32 @@ def make_all(P, tiles, pins, sensors, contacts):
     sh.add(v.dim_v(0, D["overallDepth"], W/2, f"{D['overallDepth']:.1f}", 50))
     sh.save("drawings/04_top.svg", f"Wrap ±{P['shell']['thetaMax_deg']:.0f}°")
 
-    # ---------------------------------------------------------- 05 TILE SECTION DETAIL
-    sh = Sheet("05  TILE SECTION & STACK-UP (10×)")
-    z = 10 * 3.2; ox, oy = 160, 640
+    # ---------------------------------------------------------- 05 PETAL STACK-UP
+    sh = Sheet("05  PETAL STACK-UP (10×)")
+    z = 10 * 3.2; ox, oy = 160, 760
     def X(mm): return ox + mm * z
     def Y(mm): return oy - mm * z
-    th, uo, ch, gp = TL["thickness"], TL["undersideOffset"], TL["chamfer"], TL["gap"]
-    sh.add(f"<rect x='{X(-2)}' y='{Y(0)}' width='{(32)*z}' height='{P['shell']['thickness']*z}' fill='#3a3a3a'/>")
-    sh.add(f"<text x='{X(30)+10}' y='{Y(-1)+4}' font-size='12' {FONT}>shell t={P['shell']['thickness']} (outer surface = 0, grows inward)</text>")
-    for x0, x1 in ((0, 12), (12 + gp, 26)):
-        pts = [(X(x0), Y(uo)), (X(x1), Y(uo)), (X(x1), Y(uo+th-ch)), (X(x1-ch), Y(uo+th)), (X(x0+ch), Y(uo+th)), (X(x0), Y(uo+th-ch))]
-        sh.add(f"<path d='{path_d(pts)}' fill='#e9e9e7' stroke='{INK}' stroke-width='1.4'/>")
-    pr, phh = P["pins"]["radius"], P["pins"]["height"]
-    sh.add(f"<rect x='{X(12+gp/2-pr)}' y='{Y(phh)}' width='{2*pr*z}' height='{phh*z}' fill='none' stroke='{MUTED}' stroke-width='1' stroke-dasharray='4 3'/>")
-    sh.add(f"<text x='{X(12+gp/2)}' y='{Y(-P['shell']['thickness'])+22}' font-size='11' text-anchor='middle' fill='{MUTED}' {FONT}>pin (dashed) stands at a 4-way lattice vertex, behind this section plane —</text>")
-    sh.add(f"<text x='{X(12+gp/2)}' y='{Y(-P['shell']['thickness'])+38}' font-size='11' text-anchor='middle' fill='{MUTED}' {FONT}>rounded tile corners leave ≥ r+{P['pins']['minClearance']} clearance there (checked in generate.py)</text>")
-    sh.add(f"<rect x='{X(4)}' y='{Y(uo)}' width='{4*z}' height='{uo*z}' fill='none' stroke='{ACC}' stroke-dasharray='4 3'/>")
-    sh.add(f"<text x='{X(6)}' y='{Y(uo/2)+4}' font-size='11' text-anchor='middle' fill='{ACC}' {FONT}>actuator</text>")
-    def dimv(xmm, a, b, lbl):
-        sh.add(f"<line x1='{X(xmm)}' y1='{Y(a)}' x2='{X(xmm)}' y2='{Y(b)}' stroke='{MUTED}'/><line x1='{X(xmm)-5}' y1='{Y(a)}' x2='{X(xmm)+5}' y2='{Y(a)}' stroke='{MUTED}'/>"
-               f"<line x1='{X(xmm)-5}' y1='{Y(b)}' x2='{X(xmm)+5}' y2='{Y(b)}' stroke='{MUTED}'/><text x='{X(xmm)+8}' y='{(Y(a)+Y(b))/2+4}' font-size='12' {FONT}>{lbl}</text>")
-    dimv(-1.2, 0, uo, f"rest gap {uo}"); dimv(27, uo, uo + th, f"tile t {th}"); dimv(30.5, 0, phh, f"pin h {phh}")
-    sh.add(f"<text x='{X(12+gp/2)}' y='{Y(uo+th)-14}' font-size='12' text-anchor='middle' {FONT}>gap {gp}</text>")
-    sh.add(f"<text x='{X(ch)}' y='{Y(uo+th)-14}' font-size='12' text-anchor='middle' {FONT}>chamfer {ch}×45°</text>")
-    sh.notes(["STACK-UP along surface normal",
-              f"0.0          shell outer surface",
-              f"0 … {phh}      actuator pin (visible in tile gaps), r {pr}",
-              f"{uo}          tile underside at rest",
-              f"{uo+th}          tile top",
-              f"{uo-TL['travelIn']}          tile underside when pushed (SPACE, travel {TL['travelIn']})",
-              "", "Tile = closed solid:", "  bottom face  = outlineUV at underside offset",
-              f"  side wall    = outlineUV, underside → top−{ch}", "  bevel        = outlineUV → topUV", "  top face     = topUV at top offset",
-              "", "Every vertex: shellAt(U/a, V/b) + n·offset", "Faces subdivided until edge < 3 mm"], x=100, y=110, mono=True)
-    sh.save("drawings/05_tile_section.svg", "Not to overall scale: section drawn 10×")
+    th, tr, ag, ph = TL["thickness"], TL["travelIn"], G.PT["airGap"], P["pins"]["height"]
+    low_top = th + tr + ag
+    high_top = low_top + th + tr + ag
+    sh.add(f"<rect x='{X(-2)}' y='{Y(0)}' width='{32*z}' height='{P['shell']['thickness']*z}' fill='#dcbcb0' stroke='{INK}'/>")
+    sh.add(f"<text x='{X(30)+10}' y='{Y(-1)+4}' font-size='12' {FONT}>shell t={P['shell']['thickness']}</text>")
+    sh.add(f"<rect x='{X(26)}' y='{Y(ph)}' width='{2*P['pins']['radius']*z}' height='{ph*z}' fill='#9a9a9a' stroke='{INK}'/>")
+    for x0, x1, top, fill, label in ((6, 30, low_top, "#c9d6c4", "petal"), (1, 18, high_top, "#eab4b0", "the next petal down the mask, lying over it")):
+        sh.add(f"<rect x='{X(x0)}' y='{Y(top)}' width='{(x1-x0)*z}' height='{th*z}' fill='{fill}' stroke='{INK}' stroke-width='1.2'/>")
+        sh.add(f"<text x='{X(x1)+10}' y='{Y(top)+12}' font-size='12' {FONT}>{label}</text>")
+    sh.notes(["STACK-UP along surface normal, tightest case",
+              f"0.0          relief surface (shell outer face)",
+              f"0 … {ph}      post, r {P['pins']['radius']}",
+              f"{tr + ag:.1f} … {low_top:.1f}    petal t {th}; pushed in {tr}, it stops {ag} clear",
+              f"{low_top + tr + ag:.1f} … {high_top:.1f}    the next petal, same rule across groups",
+              "", "Every petal tilts the same way:", f"  up toward the tip  {G.PT['slopeV']} mm/mm", f"  up toward its outer edge  {G.PT['slopeU']} mm/mm",
+              "so two overlapping petals differ by the same height everywhere.", "",
+              "Petals in one sector and zone move together and keep", f"  {th + ag:.1f} top to top. Across groups: {th + tr + ag:.1f}.",
+              f"Highest point above the sculpted shell: {D['petals']['highestAboveShell']}", f"Highest point above the base surface: {D['petals']['highestTotal']}",
+              f"Smallest gap with a petal pushed in: {D['petals']['pushedGap']}",
+              "", "Every vertex: shellAt(U/a, V/b) + n·(relief + offset)"], x=100, y=110, mono=True)
+    sh.save("drawings/05_tile_section.svg", "Not to overall scale: stack drawn 10×")
 
     # ---------------------------------------------------------- 06 UV DEVELOPMENT
     sh = Sheet("06  UV DEVELOPMENT (surface parameter space)"); v = View(560, 500, 2.0)
@@ -208,19 +202,19 @@ def make_all(P, tiles, pins, sensors, contacts):
             sh.add(v.poly(pts, False, LIGHT, 0.5))
     sh.add(v.poly([(-P["derived"]["U_MAX"], P["derived"]["V_MIN"]), (P["derived"]["U_MAX"], P["derived"]["V_MIN"]),
                    (P["derived"]["U_MAX"], P["derived"]["V_MAX"]), (-P["derived"]["U_MAX"], P["derived"]["V_MAX"])], True, MUTED, 0.8, extra="stroke-dasharray='5 4'"))
-    sh.add(v.poly(trimUV, True, INK, 1.4, "#2b2b2b"))
+    sh.add(v.poly(trimUV, True, INK, 1.4, "#dcbcb0"))
     for poly in opUV.values(): sh.add(v.poly(poly, True, INK, 1, "#fff"))
-    for t in tiles: sh.add(v.poly([tuple(q) for q in t["outlineUV"][::2]], True, INK, 0.6, ZONE_FILL[t["zone"]]))
+    for t in sorted(tiles, key=lambda t: t["petal"]["rank"]): sh.add(v.poly([tuple(q) for q in t["outlineUV"]], True, INK, 0.6, ZONE_FILL[t["zone"]]))
     for n in pins: sh.add(v.circle(*n["uv"], P["pins"]["radius"], "#9a9a9a"))
     for slot in G.SLOTS: sh.add(v.poly(capsule(*slot, ST["radius"]), True, INK, 1, "#fff"))
     for s in sensors: sh.add(v.circle(*s["uv"], SE["collarRadius"], "#bdbdbd", INK))
     sh.add(v.axes("U = a·θ", "V = b·φ", 140))
     sh.notes(["UV DEVELOPMENT",
-              "Flat map of the shell parameter space.", "Tile outlines are authored here, then",
+              "Flat map of the shell parameter space.", "Petal outlines are authored here, then",
               "wrapped: (U,V) → θ=U/a, φ=V/b → shellAt.", "",
               f"Dashed box = shell limits θ ±{P['shell']['thetaMax_deg']}°,", f"  φ {P['shell']['phiMin_deg']}° … {P['shell']['phiMax_deg']}°",
               "Grey diagonals = diamond lattice", f"  cell {du} × {dv}; vertices on U=0",
-              "Black = trim outline (superellipse)", "Grey dots = pins at lattice vertices"], x=1000)
+              "Black = trim outline (superellipse)", "Grey dots = posts at lattice vertices", "Petals overlap: each sits on one diamond cell"], x=1000)
     sh.save("drawings/06_uv_development.svg", "Scale 2px = 1 UV-mm")
 
     # ---------------------------------------------------------- 07 SKIN SIDE
@@ -237,9 +231,9 @@ def make_all(P, tiles, pins, sensors, contacts):
     sh.add(v.axes("-X (viewed from behind)", "+Y"))
     C = D["contacts"]
     sh.notes(["CONTACTS",
-              "A stem runs from each tile through the shell", "and ends in a soft pad near the skin.",
+              "A stem runs from each petal through the shell", "and ends in a soft pad near the skin.",
               f"Pad stops {CT['tipGap']} off the skin at rest, so a pushed tile", f"({TL['travelIn']} travel) presses {C['skinPress']} into it.", "",
-              f"Contacts: {D['contactCount']} of {D['tileCount']} tiles", f"Orange = wide thermal pads, r {CT['thermalPadRadius']}: {C['thermalPads']}",
+              f"Contacts: {D['contactCount']} of {D['tileCount']} petals", f"Orange = wide thermal pads, r {CT['thermalPadRadius']}: {C['thermalPads']}",
               f"White = touch pads, r {CT['padRadius']}", "Number = gap from shell to skin, mm", "",
-              "Tiles with no contact are left out because", f"the face is over {CT['maxReach']:.0f} away or an opening is too close."])
+              "Petals with no contact are left out because", f"the face is over {CT['maxReach']:.0f} away, an opening is too close,", "or another petal lies in the stem's way."])
     sh.save("drawings/07_skin_side.svg", f"Reach follows the estimated reference face, {D['contactCount']} contacts")

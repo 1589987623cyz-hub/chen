@@ -21,7 +21,7 @@ export default function Collaborators() {
 
   const content = () => {
     if (role !== 'owner') return <p>{t('collab.ownerOnly')}</p>
-    if (!cloudEnabled) return <p className="rounded-md border border-line bg-soft p-3">{t('collab.needCloud')}</p>
+    if (!cloudEnabled) return <p className="rounded-xl bg-soft p-3">{t('collab.needCloud')}</p>
     return (
       <>
         <Button
@@ -51,7 +51,7 @@ export default function Collaborators() {
         <ul className="mt-6 grid gap-2">
           {items.length === 0 && <li>{t('collab.empty')}</li>}
           {items.map((item) => (
-            <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line p-3">
+            <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-3">
               <span>{item.email ?? t('collab.pending')} · {t(`collab.${item.status}`)}</span>
               <Button variant="danger" onClick={() => revokeCollaborator(item.id).then(refresh)}>{t('collab.revoke')}</Button>
             </li>
@@ -64,7 +64,7 @@ export default function Collaborators() {
   return (
     <div className="max-w-2xl">
       <PageTitle>{t('collab.title')}</PageTitle>
-      <p className="mt-1 mb-4">
+      <p className="mt-3 mb-4">
         <Link to=".." relative="path" className="underline">{t('common.back')}</Link>
       </p>
       <p className="mb-4 text-muted">{t('collab.lead')}</p>

@@ -1,5 +1,6 @@
+import { heldBack } from '@/scene/feedback'
 import { contacts, maskParams, openingOutlines, pins, polygonArea, sensors, tiles } from '@/geometry/mask'
-import { NUMERIC_PARAMS, type Config, type NumericKey } from './params'
+import { NUMERIC_PARAMS, SECTORS, TRAVEL_RANGE, type Config, type NumericKey } from './params'
 
 export interface Issue {
   severity: 'error' | 'warning'
@@ -12,6 +13,15 @@ const MAX_PRINT_MASS_G = 100
 const PRINT_DENSITY = 1.24
 const EYE_SPACING_MM = maskParams.openings.eyes.cx * 2
 const EYE_SPACING_TOLERANCE_MM = 8
+export const MIN_ACTIVE_PETALS = 3
+
+/** Directions left with too few moving petals to feel, after zones and muted petals are taken out. */
+export function weakSectors(config: Config) {
+  return SECTORS.filter((sector) => {
+    const live = tiles.filter((t) => t.sector === sector && config.enabledZones.includes(t.zone) && !config.motion.muted.includes(t.id))
+    return live.length < MIN_ACTIVE_PETALS
+  })
+}
 
 export function validate(config: Config): Issue[] {
   const v = config.values
@@ -25,6 +35,9 @@ export function validate(config: Config): Issue[] {
       error('range', p.key, { min: p.min, max: p.max, unit: p.unit })
     }
   }
+  const { travel, muted } = config.motion
+  const inRange = (mm: number) => mm >= TRAVEL_RANGE.min && mm <= TRAVEL_RANGE.max
+  if (![travel, ...Object.values(config.motion.zoneTravel)].every(inRange)) error('travelRange', undefined, { min: TRAVEL_RANGE.min, max: TRAVEL_RANGE.max })
   if (issues.length) return issues
 
   if (!(v.distanceNear < v.distanceMid && v.distanceMid < v.distanceFar)) error('distanceOrder', 'distanceMid')
@@ -34,6 +47,14 @@ export function validate(config: Config): Issue[] {
 
   if (Math.abs(EYE_SPACING_MM - v.pupilDistance) > EYE_SPACING_TOLERANCE_MM) {
     issues.push({ severity: 'warning', code: 'eyeSpacing', field: 'pupilDistance', args: { value: EYE_SPACING_MM } })
+  }
+  const quiet = weakSectors(config)
+  if (config.cues.space && quiet.length) issues.push({ severity: 'warning', code: 'weakSector', args: { n: quiet.length, min: MIN_ACTIVE_PETALS } })
+  if (travel - maskParams.contacts.tipGap < 0.3) issues.push({ severity: 'warning', code: 'lightPress', args: { mm: Number((travel - maskParams.contacts.tipGap).toFixed(1)) } })
+  if (muted.length) issues.push({ severity: 'warning', code: 'muted', args: { n: muted.length } })
+  if (config.cues.space) {
+    const held = SECTORS.reduce((sum, sector) => sum + heldBack(config, sector), 0)
+    if (held) issues.push({ severity: 'warning', code: 'heldBack', args: { n: held } })
   }
   if (estimateMass() > MAX_PRINT_MASS_G) {
     issues.push({ severity: 'warning', code: 'heavy', args: { max: MAX_PRINT_MASS_G } })

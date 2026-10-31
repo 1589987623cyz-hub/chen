@@ -1,12 +1,14 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import { createConfig, parseConfig } from '@/domain/params'
+import { createConfig, parseConfig, SCENES } from '@/domain/params'
 import { configJson } from '@/export/bundles'
 import { useTheme, type Theme } from '@/features/Layout'
-import { PageTitle, SelectField, SwitchField, TextField } from '@/features/shared'
+import { PageTitle, Segmented, SelectField, SwitchField, TextField } from '@/features/shared'
 import { useI18n, type Lang } from '@/i18n'
 import { downloadBlob } from '@/lib/utils'
+import type { MaskState } from '@/scene/feedback'
+import { ViewerBoundary } from '@/scene/ViewerBoundary'
 import {
   acceptInvite,
   cloudEnabled,
@@ -20,23 +22,74 @@ import {
   type ConfigSummary,
 } from '@/services/repo'
 
+const FUNCTIONS = [
+  { kind: 'space', tint: 'bg-soft' },
+  { kind: 'air', tint: 'bg-sage' },
+  { kind: 'uv', tint: 'bg-soft' },
+] as const
+
+const MaskViewer = lazy(() => import('@/scene/MaskViewer'))
+
 export function Home() {
   const { t } = useI18n()
+  const demo = useMemo(() => {
+    const config = createConfig('demo', 'demo')
+    return { ...config, look: { ...config.look, ...SCENES.breath } }
+  }, [])
+  const [mode, setMode] = useState<'rest' | 'space' | 'air' | 'uv'>('rest')
+  const state: MaskState = mode === 'space' ? { kind: 'space', sector: 'top' } : { kind: mode }
   return (
-    <div className="max-w-3xl">
-      <PageTitle>{t('home.title')}</PageTitle>
-      <p className="mt-3 text-lg">{t('home.lead')}</p>
-      <Button asChild className="mt-5"><Link to="/dashboard">{t('home.start')}</Link></Button>
+    <div className="grid gap-14">
+      <section className="grid items-center gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+        <div className="max-w-xl">
+          <p className="mb-2 tracking-[0.2em] text-sage-ink">FEEL BEYOND SIGHT</p>
+          <PageTitle>{t('home.title')}</PageTitle>
+          <p className="mt-4 text-lg">{t('home.lead')}</p>
+          <Button asChild className="mt-6"><Link to="/dashboard">{t('home.start')}</Link></Button>
+        </div>
+        <div className="grid gap-3">
+          <div className="h-[26rem] overflow-hidden rounded-2xl border border-line lg:h-[34rem]">
+            <ViewerBoundary fallback={<p role="alert" className="p-4">{t('preview.loadFailed')}</p>}>
+              <Suspense fallback={<p role="status" className="p-4">{t('common.loading')}</p>}>
+                <MaskViewer config={demo} state={state} view="angle" autoRotate={mode === 'rest'} label={t('home.modelLabel', { state: t(`mode.${mode}`) })} />
+              </Suspense>
+            </ViewerBoundary>
+          </div>
+          <Segmented
+            label={t('preview.state')}
+            value={mode}
+            onChange={setMode}
+            options={(['rest', 'space', 'air', 'uv'] as const).map((m) => ({ value: m, label: t(`mode.${m}`) }))}
+          />
+        </div>
+      </section>
 
-      <h2 className="mt-10 font-serif text-2xl font-semibold">{t('home.howTitle')}</h2>
-      <ol className="mt-2 list-decimal ps-6">
-        {[1, 2, 3, 4].map((n) => <li key={n}>{t(`home.how${n}`)}</li>)}
-      </ol>
+      <section aria-labelledby="fn-title">
+        <h2 id="fn-title" className="gold-rule font-serif text-2xl font-semibold">{t('home.fnTitle')}</h2>
+        <ul className="mt-5 grid gap-4 md:grid-cols-3">
+          {FUNCTIONS.map(({ kind, tint }) => (
+            <li key={kind} className={`rounded-2xl p-5 ${tint}`}>
+              <h3 className="font-serif text-lg font-semibold">{t(`mode.${kind}`)}</h3>
+              <p className="mt-1">{t(`home.fn.${kind}`)}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
 
-      <h2 className="mt-8 font-serif text-2xl font-semibold">{t('home.limitsTitle')}</h2>
-      <ul className="mt-2 list-disc ps-6">
-        {[1, 2, 3].map((n) => <li key={n}>{t(`home.limit${n}`)}</li>)}
-      </ul>
+      <section className="grid gap-8 md:grid-cols-2">
+        <div>
+          <h2 className="gold-rule font-serif text-2xl font-semibold">{t('home.howTitle')}</h2>
+          <ol className="mt-4 grid list-decimal gap-2 ps-6">
+            {[1, 2, 3, 4].map((n) => <li key={n}>{t(`home.how${n}`)}</li>)}
+          </ol>
+        </div>
+        <div>
+          <h2 className="gold-rule font-serif text-2xl font-semibold">{t('home.limitsTitle')}</h2>
+          <ul className="mt-4 grid list-disc gap-2 ps-6">
+            {[1, 2, 3].map((n) => <li key={n}>{t(`home.limit${n}`)}</li>)}
+          </ul>
+        </div>
+      </section>
     </div>
   )
 }
@@ -66,7 +119,7 @@ export function Auth() {
     <div className="max-w-md">
       <PageTitle>{t('auth.title')}</PageTitle>
       {!cloudEnabled ? (
-        <p className="mt-4 rounded-md border border-line bg-soft p-3">{t('auth.unconfigured')}</p>
+        <p className="mt-4 rounded-xl bg-soft p-3">{t('auth.unconfigured')}</p>
       ) : (
         <form className="mt-4 grid gap-4" onSubmit={(e) => submit('signIn', e)}>
           <TextField label={t('auth.email')} type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -136,7 +189,7 @@ export function Dashboard() {
       {items?.length === 0 && <p className="mt-4">{t('dash.empty')}</p>}
       <ul className="mt-2 grid gap-3">
         {items?.map((item) => (
-          <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-surface p-4">
+          <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4">
             <div>
               <Link to={`/configure/${item.id}`} aria-label={t('dash.open', { name: item.name })} className="font-semibold underline">
                 {item.name}
@@ -228,7 +281,7 @@ export function Settings() {
       </SelectField>
       <SwitchField label={t('settings.large')} checked={large} onCheckedChange={setLarge} />
 
-      <h2 className="mt-4 font-serif text-2xl font-semibold">{t('settings.data')}</h2>
+      <h2 className="gold-rule mt-4 font-serif text-2xl font-semibold">{t('settings.data')}</h2>
       <div className="flex flex-wrap gap-3">
         <Button
           variant="outline"

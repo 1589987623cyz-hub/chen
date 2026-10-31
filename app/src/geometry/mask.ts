@@ -28,16 +28,25 @@ export interface Tile {
   sector: Sector
   zone: ZoneId
   outlineUV: Point[]
-  topUV: Point[]
-  topFace: { uv: Point[]; tris: [number, number, number][] }
-  bottomFace: { uv: Point[]; tris: [number, number, number][] }
+  anchorUV: Point | null
+  row: number
+  /** Each petal lying under this one, and how far this one can go in on its own before touching it. */
+  beneath: [string, number][]
+  petal: Petal
+}
+
+export interface Petal {
+  uv: number[]
+  off: number[]
+  rank: number
+  tint: number
+  size: number
 }
 
 export interface Pin {
   id: string
   base3D: Vec3
   normal: Vec3
-  clearance: number
   uv: Point
 }
 

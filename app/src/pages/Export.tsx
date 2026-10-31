@@ -53,22 +53,22 @@ export default function Export() {
   return (
     <div className="max-w-3xl">
       <PageTitle>{t('export.title')}</PageTitle>
-      <p className="mt-1 mb-4">
+      <p className="mt-3 mb-4">
         <Link to=".." relative="path" className="underline">{t('common.back')}</Link>
       </p>
       <p className="mb-4 text-muted">{t('export.concept')}</p>
 
       {blocked && (
-        <p role="alert" className="mb-4 rounded-md border border-danger p-3 font-medium text-danger">
+        <p role="alert" className="mb-4 rounded-xl border border-danger p-3 font-medium text-danger">
           {t('export.blocked', { n: errors.length })}{' '}
           <Link to=".." relative="path" className="underline">{t('export.review')}</Link>
         </p>
       )}
-      {!config.feedbackConfirmed && <p className="mb-4 rounded-md border border-line bg-soft p-3">{t('export.unconfirmed')}</p>}
+      {!config.feedbackConfirmed && <p className="mb-4 rounded-xl bg-soft p-3">{t('export.unconfirmed')}</p>}
 
       <ul className="grid gap-3">
         {items.map((item) => (
-          <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-line bg-surface p-4">
+          <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4">
             <div className="min-w-0 flex-1 basis-64">
               <h2 className="font-semibold">{item.title}</h2>
               <p className="text-sm text-muted">{item.hint}</p>

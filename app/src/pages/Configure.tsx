@@ -1,72 +1,64 @@
-import { lazy, Suspense, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
-import {
-  NUMERIC_PARAMS,
-  SIZE_PRESETS,
-  ZONE_IDS,
-  type NumericKey,
-  type SizePreset,
-  type ZoneId,
-} from '@/domain/params'
+import { NUMERIC_PARAMS, SIZE_PRESETS, ZONE_IDS, type NumericKey, type PetalLook, type SizePreset, type ZoneId } from '@/domain/params'
 import { estimateMass, hasBlockingIssue } from '@/domain/validate'
 import { useConfig } from '@/features/ConfigContext'
-import { issueText, NumberField, PageTitle, Section, SelectField, SwitchField, TextField } from '@/features/shared'
+import { MaskStage } from '@/features/MaskStage'
+import { LookPanel, MotionPanel } from '@/features/PetalControls'
+import { issueText, Note, NumberField, PageTitle, Section, SelectField, SwitchField, TextField } from '@/features/shared'
+import { INITIAL_SIMULATION, SimulationPanel } from '@/features/SimulationPanel'
+import { tiles } from '@/geometry/mask'
 import { useI18n } from '@/i18n'
-import { ViewerBoundary } from '@/scene/ViewerBoundary'
-
-const MaskViewer = lazy(() => import('@/scene/MaskViewer'))
+import { resolveSimulation, REST, type Simulation } from '@/scene/feedback'
+import { ShareControl } from './Preview'
 
 const keysOf = (group: string, mode?: 'simple' | 'pro') =>
   NUMERIC_PARAMS.filter((p) => p.group === group && (!mode || p.mode === mode)).map((p) => p.key as NumericKey)
 
-function SizeStep() {
-  const { t } = useI18n()
-  const { config, update } = useConfig()
-  return (
-    <>
-      <p className="mb-4 text-muted">{t('size.lead')}</p>
-      <p className="mb-4 rounded-md border border-line bg-soft p-3">{t('size.fixedModel')}</p>
-      <SelectField
-        label={t('size.preset')}
-        value={config.sizePreset}
-        onChange={(e) => {
-          const size = e.target.value as SizePreset | 'custom'
-          if (size === 'custom') return
-          update({ sizePreset: size, values: { ...config.values, ...SIZE_PRESETS[size] } })
-        }}
-      >
-        <option value="S">S</option>
-        <option value="M">M</option>
-        <option value="L">L</option>
-        <option value="custom" disabled={config.sizePreset !== 'custom'}>{t('size.custom')}</option>
-      </SelectField>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        {keysOf('measure').map((key) => <NumberField key={key} name={key} />)}
-      </div>
-    </>
-  )
-}
+const TABS = ['look', 'motion', 'simulate', 'fit', 'feedback', 'review'] as const
+type Tab = (typeof TABS)[number]
 
-function ZonesStep() {
+function FitPanel({ onHighlight }: { onHighlight: (zone: ZoneId | null) => void }) {
   const { t } = useI18n()
   const { config, update } = useConfig()
   const toggle = (zone: ZoneId, on: boolean) =>
     update({ enabledZones: on ? [...config.enabledZones, zone] : config.enabledZones.filter((z) => z !== zone) })
   return (
-    <>
-      <p className="mb-4 text-muted">{t('zones.lead')}</p>
-      <div className="grid gap-1">
-        {ZONE_IDS.map((zone) => (
-          <SwitchField
-            key={zone}
-            label={t(`place.${zone}`)}
-            checked={config.enabledZones.includes(zone)}
-            onCheckedChange={(on) => toggle(zone, on)}
-          />
-        ))}
-      </div>
-    </>
+    <div className="grid gap-5">
+      <Section title={t('zones.title')} hint={t('zones.lead')}>
+        <div className="grid gap-1">
+          {ZONE_IDS.map((zone) => (
+            <div key={zone} onMouseEnter={() => onHighlight(zone)} onMouseLeave={() => onHighlight(null)} onFocus={() => onHighlight(zone)} onBlur={() => onHighlight(null)}>
+              <SwitchField
+                label={`${t(`place.${zone}`)} · ${t('zones.count', { n: tiles.filter((x) => x.zone === zone).length })}`}
+                checked={config.enabledZones.includes(zone)}
+                onCheckedChange={(on) => toggle(zone, on)}
+              />
+            </div>
+          ))}
+        </div>
+      </Section>
+      <Section title={t('size.title')} hint={t('size.lead')}>
+        <Note>{t('size.fixedModel')}</Note>
+        <SelectField
+          label={t('size.preset')}
+          value={config.sizePreset}
+          onChange={(e) => {
+            const size = e.target.value as SizePreset | 'custom'
+            if (size !== 'custom') update({ sizePreset: size, values: { ...config.values, ...SIZE_PRESETS[size] } })
+          }}
+        >
+          <option value="S">S</option>
+          <option value="M">M</option>
+          <option value="L">L</option>
+          <option value="custom" disabled={config.sizePreset !== 'custom'}>{t('size.custom')}</option>
+        </SelectField>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {keysOf('measure').map((key) => <NumberField key={key} name={key} />)}
+        </div>
+      </Section>
+    </div>
   )
 }
 
@@ -76,24 +68,17 @@ const FEEDBACK_PRESETS: Record<string, Partial<Record<NumericKey, number>>> = {
   strong: { hapticLevel: 5, thermalLevel: 3, cueDuration: 3 },
 }
 
-function FeedbackStep() {
+function FeedbackPanel() {
   const { t } = useI18n()
   const { config, role, update } = useConfig()
   const locked = role === 'helper'
-  const setCue = (key: keyof typeof config.cues, on: boolean) =>
-    update({ cues: { ...config.cues, [key]: on }, feedbackConfirmed: false })
+  const setCue = (key: keyof typeof config.cues, on: boolean) => update({ cues: { ...config.cues, [key]: on }, feedbackConfirmed: false })
   return (
-    <>
-      <p className="mb-4 text-muted">{t('fb.lead')}</p>
-      <Section title={t('fb.cues')}>
+    <div className="grid gap-5">
+      {locked && <Note>{t('cfg.helperNote')}</Note>}
+      <Section title={t('fb.cues')} hint={t('fb.lead')}>
         {(['space', 'air', 'uv', 'thermal', 'tap'] as const).map((cue) => (
-          <SwitchField
-            key={cue}
-            label={t(`cue.${cue}`)}
-            checked={config.cues[cue]}
-            disabled={locked}
-            onCheckedChange={(on) => setCue(cue, on)}
-          />
+          <SwitchField key={cue} label={t(`cue.${cue}`)} checked={config.cues[cue]} disabled={locked} onCheckedChange={(on) => setCue(cue, on)} />
         ))}
       </Section>
       <Section title={t('fb.alerts')}>
@@ -135,7 +120,7 @@ function FeedbackStep() {
           {keysOf('feedback', 'pro').map((key) => <NumberField key={key} name={key} disabled={locked} />)}
         </Section>
       )}
-      <div className="mt-6 rounded-md border border-line bg-soft p-3">
+      <Note tone="sage">
         <SwitchField
           label={t('fb.confirm')}
           hint={t('fb.confirmHint')}
@@ -143,71 +128,64 @@ function FeedbackStep() {
           disabled={locked}
           onCheckedChange={(feedbackConfirmed) => update({ feedbackConfirmed })}
         />
-      </div>
-    </>
+      </Note>
+    </div>
   )
 }
 
-function StructureStep() {
+function ReviewPanel({ onGo }: { onGo: (tab: Tab) => void }) {
   const { t } = useI18n()
-  const { config, update } = useConfig()
-  return (
-    <>
-      <p className="mb-4 text-muted">{t('struct.lead')}</p>
-      <SelectField
-        label={t('struct.printPreset')}
-        value={config.printPreset}
-        onChange={(e) => update({ printPreset: e.target.value as typeof config.printPreset })}
-      >
-        <option value="fdm">{t('struct.fdm')}</option>
-        <option value="service">{t('struct.service')}</option>
-      </SelectField>
-    </>
-  )
-}
-
-function ReviewStep({ onGo }: { onGo: (step: string) => void }) {
-  const { t } = useI18n()
-  const { issues } = useConfig()
+  const { config, issues, role, update } = useConfig()
   const errors = issues.filter((i) => i.severity === 'error')
   const warnings = issues.filter((i) => i.severity === 'warning')
-  const stepForField = (issue: (typeof issues)[number]) => {
-    if (!issue.field) return 'feedback'
-    return NUMERIC_PARAMS.find((p) => p.key === issue.field)!.group === 'measure' ? 'size' : 'feedback'
+  const tabFor = (issue: (typeof issues)[number]): Tab => {
+    if (!issue.field) return issue.code === 'travelRange' ? 'motion' : 'feedback'
+    return NUMERIC_PARAMS.find((p) => p.key === issue.field)!.group === 'measure' ? 'fit' : 'feedback'
   }
   return (
-    <div className="grid gap-4">
-      <p role="status" className={errors.length ? 'font-semibold text-danger' : 'font-semibold text-ok'}>
-        {errors.length ? t('review.errors', { n: errors.length }) : t('review.ok')}
-      </p>
-      {errors.length > 0 && (
-        <ul className="grid gap-2">
-          {errors.map((issue, i) => {
-            const step = stepForField(issue)
-            return (
-              <li key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-danger p-3">
-                <span>
-                  {issue.field
-                    ? t('review.fieldIssue', { field: t(`param.${issue.field}`), issue: issueText(t, issue) })
-                    : issueText(t, issue)}
-                </span>
-                <Button variant="outline" onClick={() => onGo(step)}>
-                  {t('review.goField', { step: t(`step.${step}`) })}
-                </Button>
-              </li>
-            )
-          })}
-        </ul>
-      )}
-      {warnings.length > 0 && (
-        <div>
-          <h3 className="font-semibold">{t('review.warnings')}</h3>
-          <ul className="list-disc ps-6">
-            {warnings.map((issue, i) => <li key={i} className="text-warn">{issueText(t, issue)}</li>)}
+    <div className="grid gap-5">
+      <Section title={t('review.title')}>
+        <p role="status" className={errors.length ? 'font-semibold text-danger' : 'font-semibold text-ok'}>
+          {errors.length ? t('review.errors', { n: errors.length }) : t('review.ok')}
+        </p>
+        {errors.length > 0 && (
+          <ul className="grid gap-2">
+            {errors.map((issue, i) => {
+              const tab = tabFor(issue)
+              return (
+                <li key={i} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-danger p-3">
+                  <span>{issue.field ? t('review.fieldIssue', { field: t(`param.${issue.field}`), issue: issueText(t, issue) }) : issueText(t, issue)}</span>
+                  <Button variant="outline" onClick={() => onGo(tab)}>{t('review.goField', { step: t(`tab.${tab}`) })}</Button>
+                </li>
+              )
+            })}
           </ul>
-        </div>
+        )}
+        {warnings.length > 0 && (
+          <div>
+            <h4 className="font-semibold">{t('review.warnings')}</h4>
+            <ul className="list-disc ps-6">
+              {warnings.map((issue, i) => <li key={i} className="text-warn">{issueText(t, issue)}</li>)}
+            </ul>
+          </div>
+        )}
+        <p>{t('review.mass', { g: estimateMass().toFixed(0) })}</p>
+      </Section>
+      {config.mode === 'pro' && (
+        <Section title={t('struct.title')} hint={t('struct.lead')}>
+          <SelectField label={t('struct.printPreset')} value={config.printPreset} onChange={(e) => update({ printPreset: e.target.value as typeof config.printPreset })}>
+            <option value="fdm">{t('struct.fdm')}</option>
+            <option value="service">{t('struct.service')}</option>
+          </SelectField>
+        </Section>
       )}
-      <p>{t('review.mass', { g: estimateMass().toFixed(0) })}</p>
+      <Section title={t('review.next')}>
+        <div className="flex flex-wrap gap-3">
+          {!hasBlockingIssue(issues) && <Button asChild><Link to="export">{t('cfg.toExport')}</Link></Button>}
+          {role === 'owner' && <Button variant="outline" asChild><Link to="collaborators">{t('cfg.toCollab')}</Link></Button>}
+        </div>
+      </Section>
+      {role === 'owner' && <ShareControl id={config.id} />}
     </div>
   )
 }
@@ -215,91 +193,112 @@ function ReviewStep({ onGo }: { onGo: (step: string) => void }) {
 export default function Configure() {
   const { t } = useI18n()
   const { config, role, issues, update } = useConfig()
-  const steps = useMemo(
-    () => ['size', 'zones', 'feedback', ...(config.mode === 'pro' ? ['structure'] : []), 'review'],
-    [config.mode],
-  )
-  const [step, setStep] = useState('size')
-  const current = steps.includes(step) ? step : 'size'
-  const index = steps.indexOf(current)
-  const heading = useRef<HTMLHeadingElement>(null)
+  const [params, setParams] = useSearchParams()
+  const requested = params.get('tab') as Tab | null
+  const tab: Tab = requested && TABS.includes(requested) ? requested : 'look'
+  const panel = useRef<HTMLDivElement>(null)
+  const tabs = useRef<Partial<Record<Tab, HTMLButtonElement | null>>>({})
 
-  const go = (next: string) => {
-    setStep(next)
-    requestAnimationFrame(() => heading.current?.focus())
+  const [sim, setSim] = useState<Simulation>(INITIAL_SIMULATION)
+  const [selected, setSelected] = useState<string | null>(null)
+  const [pressed, setPressed] = useState<string[]>([])
+  const [highlight, setHighlight] = useState<ZoneId | null>(null)
+  const result = useMemo(() => resolveSimulation(config, sim), [config, sim])
+  const simulating = tab === 'simulate'
+
+  const go = (next: Tab, focusPanel = true) => {
+    setParams(next === 'look' ? {} : { tab: next }, { replace: true })
+    if (focusPanel) requestAnimationFrame(() => panel.current?.focus())
   }
 
-  const blocked = hasBlockingIssue(issues)
+  const onTabKey = (event: KeyboardEvent) => {
+    const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0
+    if (!step) return
+    event.preventDefault()
+    const next = TABS[(TABS.indexOf(tab) + step + TABS.length) % TABS.length]
+    go(next, false)
+    tabs.current[next]?.focus()
+  }
+
+  useEffect(() => {
+    if (!pressed.length) return
+    const timer = setTimeout(() => setPressed([]), 1400)
+    return () => clearTimeout(timer)
+  }, [pressed])
+
+  const pick = (id: string | null) => {
+    setSelected(id)
+    if (id && tab !== 'motion') go('motion', false)
+  }
+  const look = (patch: Partial<PetalLook>) => update({ look: { ...config.look, ...patch } })
+  const blockers = issues.filter((i) => i.severity === 'error').length
 
   return (
     <div>
-      <div className="mb-4">
+      <header className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <PageTitle>{config.name}</PageTitle>
-      </div>
-      {role === 'helper' && <p className="mb-4 rounded-md border border-line bg-soft p-3">{t('cfg.helperNote')}</p>}
+        <div className="flex flex-wrap items-end gap-3">
+          <TextField label={t('cfg.name')} value={config.name} onChange={(e) => update({ name: e.target.value })} />
+          <SelectField label={t('cfg.modeLabel')} value={config.mode} onChange={(e) => update({ mode: e.target.value as typeof config.mode })}>
+            <option value="simple">{t('cfg.modeSimple')}</option>
+            <option value="pro">{t('cfg.modePro')}</option>
+          </SelectField>
+        </div>
+      </header>
+      {role === 'helper' && <div className="mb-4"><Note>{t('cfg.helperNote')}</Note></div>}
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2">
-        <TextField label={t('cfg.name')} value={config.name} onChange={(e) => update({ name: e.target.value })} />
-        <SelectField
-          label={t('cfg.modeLabel')}
-          value={config.mode}
-          onChange={(e) => update({ mode: e.target.value as typeof config.mode })}
-        >
-          <option value="simple">{t('cfg.modeSimple')}</option>
-          <option value="pro">{t('cfg.modePro')}</option>
-        </SelectField>
-      </div>
+      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(24rem,1fr)]">
+        <aside className="lg:sticky lg:top-4" aria-label={t('preview.title')}>
+          <MaskStage
+            config={config}
+            state={simulating ? result.state : REST}
+            stateName={t(`mode.${simulating ? sim.kind : 'rest'}`)}
+            pulseHz={simulating ? result.pulseHz : 0}
+            highlightZone={highlight}
+            selected={selected}
+            pressed={pressed}
+            onSelect={pick}
+          />
+        </aside>
 
-      <nav aria-label={t('cfg.steps')} className="mb-6">
-        <ol className="flex flex-wrap gap-2">
-          {steps.map((s) => (
-            <li key={s}>
-              <Button
-                variant={s === current ? 'default' : 'outline'}
-                aria-current={s === current ? 'step' : undefined}
-                onClick={() => go(s)}
+        <section className="rounded-2xl border border-line bg-surface">
+          <div role="tablist" aria-label={t('cfg.tabs')} onKeyDown={onTabKey} className="flex flex-wrap gap-1 border-b border-line p-2">
+            {TABS.map((name) => (
+              <button
+                key={name}
+                ref={(el) => { tabs.current[name] = el }}
+                id={`tab-${name}`}
+                type="button"
+                role="tab"
+                aria-selected={tab === name}
+                aria-controls="tab-panel"
+                tabIndex={tab === name ? 0 : -1}
+                className={`min-h-11 rounded-full px-3 py-1.5 ${tab === name ? 'bg-accent font-medium text-accent-ink' : 'hover:bg-soft'}`}
+                onClick={() => go(name)}
               >
-                {t(`step.${s}`)}
-              </Button>
-            </li>
-          ))}
-        </ol>
-      </nav>
-
-      <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <section aria-labelledby="step-heading">
-          <p className="text-sm text-muted">{t('cfg.stepOf', { n: index + 1, total: steps.length })}</p>
-          <h2 id="step-heading" ref={heading} tabIndex={-1} className="mb-3 font-serif text-2xl font-semibold outline-none">
-            {t(`${current === 'size' ? 'size' : current === 'zones' ? 'zones' : current === 'feedback' ? 'fb' : current === 'structure' ? 'struct' : 'review'}.title`)}
-          </h2>
-          {current === 'size' && <SizeStep />}
-          {current === 'zones' && <ZonesStep />}
-          {current === 'feedback' && <FeedbackStep />}
-          {current === 'structure' && <StructureStep />}
-          {current === 'review' && <ReviewStep onGo={go} />}
-
-          <div className="mt-6 flex flex-wrap gap-3">
-            {index > 0 && <Button variant="outline" onClick={() => go(steps[index - 1])}>{t('common.previous')}</Button>}
-            {index < steps.length - 1 && <Button onClick={() => go(steps[index + 1])}>{t('common.next')}</Button>}
-            {current === 'review' && !blocked && (
-              <Button asChild><Link to="export">{t('cfg.toExport')}</Link></Button>
+                {t(`tab.${name}`)}
+                {name === 'review' && blockers > 0 && <span className="ms-1 font-semibold">({blockers})</span>}
+              </button>
+            ))}
+          </div>
+          <div id="tab-panel" ref={panel} role="tabpanel" aria-labelledby={`tab-${tab}`} tabIndex={-1} className="p-4 outline-none sm:p-5">
+            {tab === 'look' && <LookPanel look={config.look} onChange={look} />}
+            {tab === 'motion' && (
+              <MotionPanel
+                config={config}
+                locked={role === 'helper'}
+                selected={selected}
+                onSelect={setSelected}
+                onPress={setPressed}
+                onChange={(patch) => update({ motion: { ...config.motion, ...patch }, feedbackConfirmed: false })}
+              />
             )}
+            {tab === 'simulate' && <SimulationPanel config={config} sim={sim} result={result} onChange={setSim} />}
+            {tab === 'fit' && <FitPanel onHighlight={setHighlight} />}
+            {tab === 'feedback' && <FeedbackPanel />}
+            {tab === 'review' && <ReviewPanel onGo={go} />}
           </div>
         </section>
-
-        <aside className="lg:sticky lg:top-4" aria-label={t('preview.title')}>
-          <div className="h-80 lg:h-[30rem]">
-            <ViewerBoundary fallback={<p role="alert">{t('preview.loadFailed')}</p>}>
-              <Suspense fallback={<p role="status">{t('common.loading')}</p>}>
-                <MaskViewer config={config} label={t('preview.title')} />
-              </Suspense>
-            </ViewerBoundary>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-3">
-            <Button variant="outline" asChild><Link to="preview">{t('cfg.toPreview')}</Link></Button>
-            {role === 'owner' && <Button variant="outline" asChild><Link to="collaborators">{t('cfg.toCollab')}</Link></Button>}
-          </div>
-        </aside>
       </div>
     </div>
   )

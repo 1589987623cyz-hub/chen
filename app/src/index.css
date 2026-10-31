@@ -6,6 +6,10 @@
   --color-ink: var(--ink);
   --color-muted: var(--muted);
   --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-sage: var(--sage);
+  --color-sage-ink: var(--sage-ink);
+  --color-gold: var(--gold);
   --color-accent: var(--accent);
   --color-accent-ink: var(--accent-ink);
   --color-soft: var(--soft);
@@ -16,37 +20,46 @@
   --font-serif: Georgia, 'Songti SC', 'SimSun', serif;
 }
 
+/* Every colour in the site comes from the petals: ivory bases, rose and sage tips, a gold edge. */
 :root {
-  --bg: #fbf7f2;
-  --surface: #ffffff;
-  --ink: #2b2523;
-  --muted: #625651;
-  --line: #8f7f77;
-  --accent: #8a3f4e;
+  --bg: #faf5ef;
+  --surface: #fffdfa;
+  --ink: #2f2724;
+  --muted: #655853;
+  --line: #d8c8bc;
+  --line-strong: #8f7f77;
+  --accent: #8f4452;
   --accent-ink: #ffffff;
-  --soft: #f4e6e2;
+  --soft: #f5e9e3;
+  --sage: #e4ebdf;
+  --sage-ink: #3f5a47;
+  --gold: #b98a55;
   --danger: #a3211f;
   --warn: #7a4e00;
-  --ok: #1f6b45;
-  --canvas: #e9dcd3;
-  --canvas-light: #fbf5f0;
+  --ok: #2f6a4a;
+  --stage-a: #fffaf5;
+  --stage-b: #efe2d8;
   --focus: #1b4fd8;
 }
 
 :root[data-theme='dark'] {
-  --bg: #1b1817;
-  --surface: #272220;
+  --bg: #1d1918;
+  --surface: #282220;
   --ink: #f6efea;
   --muted: #cdbfb8;
-  --line: #91817a;
-  --accent: #f2b5bf;
+  --line: #4e423e;
+  --line-strong: #91817a;
+  --accent: #f0b6bf;
   --accent-ink: #2b1a1e;
   --soft: #3a2e2c;
+  --sage: #2f3a32;
+  --sage-ink: #c7dccb;
+  --gold: #d9a56c;
   --danger: #ffa49e;
   --warn: #f2c66d;
   --ok: #8ad9ad;
-  --canvas: #1f1a19;
-  --canvas-light: #3a312e;
+  --stage-a: #3a312e;
+  --stage-b: #1f1a19;
   --focus: #9dc0ff;
 }
 
@@ -56,14 +69,18 @@
   --ink: #ffffff;
   --muted: #ffffff;
   --line: #ffffff;
+  --line-strong: #ffffff;
   --accent: #ffee00;
   --accent-ink: #000000;
   --soft: #1f1f1f;
+  --sage: #1f1f1f;
+  --sage-ink: #ffffff;
+  --gold: #ffee00;
   --danger: #ff9a9a;
   --warn: #ffee00;
   --ok: #8dffb5;
-  --canvas: #000000;
-  --canvas-light: #000000;
+  --stage-a: #000000;
+  --stage-b: #000000;
   --focus: #00e5ff;
 }
 
@@ -81,6 +98,30 @@ body {
 :focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 2px;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+}
+
+.viewer-stage {
+  background: radial-gradient(ellipse at 50% 42%, var(--stage-a) 0%, var(--stage-a) 35%, var(--stage-b) 100%);
+}
+
+/* A short gold rule under headings, the same hairline as the petal rims. */
+.gold-rule::after {
+  content: '';
+  display: block;
+  width: 2.75rem;
+  height: 2px;
+  margin-top: 0.5rem;
+  background: var(--gold);
+}
+
+input[type='range'] {
+  accent-color: var(--accent);
 }
 
 @media (prefers-reduced-motion: reduce) {

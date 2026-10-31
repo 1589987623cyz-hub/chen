@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { createConfig } from '@/domain/params'
 import { tileMesh, tiles } from '@/geometry/mask'
+import { specHtml } from './bundles'
 import { stlBinary, threeMf, zip } from './files'
 
 describe('file formats', () => {
@@ -25,5 +27,15 @@ describe('file formats', () => {
     expect(text).toContain('3D/3dmodel.model')
     expect(text).toContain('[Content_Types].xml')
     expect(text).toContain('<triangle ')
+  })
+
+  it('writes petal motion and look into the specification', () => {
+    const config = createConfig('test', 'test-id')
+    config.motion = { ...config.motion, travel: 1.2, muted: ['T00-00'] }
+    config.look.palette = 'rose'
+    const html = specHtml(config, 'en')
+    expect(html).toContain('1.2 mm')
+    expect(html).toContain('T00-00')
+    expect(html).toContain('Rose')
   })
 })

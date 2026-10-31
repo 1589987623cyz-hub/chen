@@ -80,7 +80,17 @@ table{border-collapse:collapse;width:100%}th,td{border:1px solid #555;padding:.4
 <h2>${t('spec.assembly')}</h2>
 <ol>${steps}</ol>
 <h2>${t('spec.feedback')}</h2>
-<table><tbody>${rows('feedback')}</tbody></table>
+<table><tbody>${rows('feedback')}
+<tr><th scope="row">${t('spec.travel')}</th><td>${config.motion.travel} mm</td></tr>
+<tr><th scope="row">${t('spec.muted')}</th><td>${config.motion.muted.length ? config.motion.muted.join(t('common.list')) : t('spec.none')}</td></tr>
+</tbody></table>
+<h2>${t('spec.look')}</h2>
+<p>${t('spec.lookNote')}</p>
+<table><tbody>
+<tr><th scope="row">${t('look.palette')}</th><td>${t(`palette.${config.look.palette}`)}</td></tr>
+<tr><th scope="row">${t('look.opacity')}</th><td>${config.look.opacity}%</td></tr>
+<tr><th scope="row">${t('look.shell')}</th><td>${t(`shell.${config.look.shell}`)}</td></tr>
+</tbody></table>
 </main>
 </body>
 </html>`

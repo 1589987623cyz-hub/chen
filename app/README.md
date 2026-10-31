@@ -26,7 +26,7 @@ npm run build
 未配置 Supabase 或未登录时，网站以本地模式运行，数据只保存在当前浏览器中。登录后，配置保存在云端，可以邀请协助者，也可以打开公开分享：任何人打开 `/view/<配置 id>` 都能查看，刷新就能看到最新保存的版本。公开页面不包含测量尺寸。
 
 1. 在 Supabase 创建项目。
-2. 在 SQL Editor 中依次运行 `supabase/migrations/001_init.sql` 和 `002_share.sql`。
+2. 在 SQL Editor 中依次运行 `supabase/migrations/001_init.sql`、`002_share.sql` 和 `003_petals.sql`。
 3. 在 Authentication 的 URL Configuration 里，把 Site URL 设为网站地址。
 4. 本地运行：复制 `.env.example` 为 `.env.local`，填入项目 URL 和 anon key，再重启网站。
 5. 线上部署：在 GitHub 仓库的 Settings → Secrets and variables → Actions → Variables 里添加 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY`，再重新运行部署。

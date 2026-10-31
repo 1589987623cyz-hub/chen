@@ -117,7 +117,7 @@ function ConfigProvider({ initial, role, children }: { initial: Config; role: Ro
 
   return (
     <Context.Provider value={value}>
-      <p role="status" aria-live="polite" className="mb-2 min-h-6 text-sm text-muted">
+      <p role="status" aria-live="polite" className="mb-1 min-h-5 text-end text-sm text-muted">
         {saveState === 'saving' && t('common.saving')}
         {saveState === 'saved' && t('common.saved')}
       </p>

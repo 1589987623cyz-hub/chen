@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { NUMERIC_PARAMS, SECTORS, ZONE_IDS } from '@/domain/params'
+import { IDLE_MODES, NUMERIC_PARAMS, PALETTE_IDS, PRESS_PATTERNS, SCENE_IDS, SECTORS, SHELL_IDS, ZONE_IDS } from '@/domain/params'
 import { en, zh } from './messages'
 
 function sources(dir: string): string[] {
@@ -32,7 +32,13 @@ describe('translations', () => {
       ...NUMERIC_PARAMS.map((p) => `param.${p.key}`),
       ...ZONE_IDS.map((z) => `place.${z}`),
       ...SECTORS.map((s) => `sector.${s}`),
-      ...['size', 'zones', 'feedback', 'structure', 'review'].map((s) => `step.${s}`),
+      ...['look', 'motion', 'simulate', 'fit', 'feedback', 'review'].map((s) => `tab.${s}`),
+      ...PALETTE_IDS.map((p) => `palette.${p}`),
+      ...SHELL_IDS.map((s) => `shell.${s}`),
+      ...['space', 'air', 'uv'].map((f) => `home.fn.${f}`),
+      ...IDLE_MODES.map((m) => `idle.${m}`),
+      ...PRESS_PATTERNS.map((p) => `pattern.${p}`),
+      ...SCENE_IDS.map((s) => `scene.${s}`),
       ...['rest', 'space', 'air', 'uv'].map((m) => `mode.${m}`),
       ...['front', 'side', 'back', 'top', 'angle'].map((v) => `view.${v}`),
       ...['space', 'air', 'uv', 'thermal', 'tap'].map((c) => `cue.${c}`),

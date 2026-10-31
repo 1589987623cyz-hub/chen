@@ -3,6 +3,7 @@ import type { Config, Sector } from '@/domain/params'
 import { maskParams, tiles, zoneWithNeighbours, type Tile } from '@/geometry/mask'
 
 export type MaskState = { kind: 'rest' } | { kind: 'space'; sector: Sector } | { kind: 'air' } | { kind: 'uv' }
+export const REST: MaskState = { kind: 'rest' }
 
 export type SimulationKind = MaskState['kind']
 
@@ -57,7 +58,46 @@ export interface TileFeedback {
   travel: number
   color: THREE.Color
   pulses: boolean
+  /** Seconds after the cue starts. */
+  delay: number
 }
+
+/** The travel a petal is set to, from its zone or the overall setting. */
+export const wantedTravel = (config: Config, tile: Tile) => config.motion.zoneTravel[tile.zone] ?? config.motion.travel
+
+const byRank = [...tiles].sort((a, b) => a.petal.rank - b.petal.rank)
+const tileById = new Map(tiles.map((t) => [t.id, t]))
+
+/**
+ * How far each moving petal can really go. A petal can only sink into the room left above the petals under it,
+ * so one that moves further than its neighbour beneath is held back. Worked from the bottom of the stack up.
+ */
+export function limitTravel(wanted: Map<string, number>) {
+  const done = new Map<string, number>()
+  for (const tile of byRank) {
+    const want = wanted.get(tile.id)
+    if (want === undefined) continue
+    let limit = want
+    for (const [id, gap] of tile.beneath) limit = Math.min(limit, (done.get(id) ?? 0) + gap)
+    done.set(tile.id, Math.max(0, Math.round(limit * 100) / 100))
+  }
+  return done
+}
+
+/** Travel for one petal or a group moved on their own, as the test buttons do. */
+export function pressTravel(config: Config, ids: string[]) {
+  return limitTravel(new Map(ids.map((id) => [id, wantedTravel(config, tileById.get(id)!)])))
+}
+
+/** Petals that cannot reach their full travel in the cue for a direction. */
+export function heldBack(config: Config, sector: Sector) {
+  const list = liveTiles(config, sector)
+  const done = limitTravel(new Map(list.map((t) => [t.id, wantedTravel(config, t)])))
+  return list.filter((t) => done.get(t.id)! < wantedTravel(config, t) - 0.01).length
+}
+
+const liveTiles = (config: Config, sector: Sector) =>
+  tiles.filter((t) => t.sector === sector && config.enabledZones.includes(t.zone) && !config.motion.muted.includes(t.id))
 
 const HEAT = ['#2f7bff', '#27c7e8', '#3fe08a', '#ffd23a'].map((c) => new THREE.Color(c))
 
@@ -79,15 +119,19 @@ function byDistance(list: Tile[], centre: [number, number], stops: THREE.Color[]
 export function tileFeedback(config: Config, state: MaskState): Map<string, TileFeedback> {
   const out = new Map<string, TileFeedback>()
   if (state.kind === 'space') {
-    const list = tiles.filter((t) => t.sector === state.sector && config.enabledZones.includes(t.zone))
+    const list = liveTiles(config, state.sector)
     const centre: [number, number] = [0, maskParams.openings.eyes.cy]
+    const travel = limitTravel(new Map(list.map((t) => [t.id, wantedTravel(config, t)])))
+    // Petals lower in the stack go first, so a petal never presses on one that has not moved yet.
+    const order = [...list].sort((a, b) => a.petal.rank - b.petal.rank).map((t) => t.id)
+    const step = config.motion.pattern === 'cascade' ? config.motion.stepMs / 1000 : 0
     for (const [tile, color] of byDistance(list, centre, HEAT)) {
-      out.set(tile.id, { travel: maskParams.tiles.travelIn, color, pulses: false })
+      out.set(tile.id, { travel: travel.get(tile.id)!, color, pulses: false, delay: order.indexOf(tile.id) * step })
     }
   }
   if (state.kind === 'air') {
     const color = new THREE.Color('#6fb3ff')
-    for (const tile of zoneWithNeighbours('cheek_R')) out.set(tile.id, { travel: 0, color, pulses: true })
+    for (const tile of zoneWithNeighbours('cheek_R')) out.set(tile.id, { travel: 0, color, pulses: true, delay: 0 })
   }
   if (state.kind === 'uv') {
     const list = zoneWithNeighbours('cheek_L')
@@ -95,7 +139,7 @@ export function tileFeedback(config: Config, state: MaskState): Map<string, Tile
     const cy = list.reduce((sum, t) => sum + t.centroid2D[1], 0) / list.length
     const warm = [new THREE.Color('#ff4a2a'), new THREE.Color('#ffd23a')]
     for (const [tile, color] of byDistance(list, [cx, cy], warm)) {
-      out.set(tile.id, { travel: 0, color, pulses: true })
+      out.set(tile.id, { travel: 0, color, pulses: true, delay: 0 })
     }
   }
   return out

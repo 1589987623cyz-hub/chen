@@ -1,6 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import './index.css'
 import { ConfigRoute } from '@/features/ConfigContext'
 import { Layout, ThemeProvider } from '@/features/Layout'
@@ -9,7 +9,7 @@ import { Accessibility, Auth, Dashboard, Home, Invite, Settings } from '@/pages/
 import Collaborators from '@/pages/Collaborators'
 import Configure from '@/pages/Configure'
 import Export from '@/pages/Export'
-import Preview, { SharedPreview } from '@/pages/Preview'
+import { SharedPreview } from '@/pages/Preview'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
@@ -23,7 +23,7 @@ createRoot(document.getElementById('root')!).render(
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="configure/:id" element={<ConfigRoute />}>
                 <Route index element={<Configure />} />
-                <Route path="preview" element={<Preview />} />
+                <Route path="preview" element={<Navigate to="../?tab=simulate" relative="path" replace />} />
                 <Route path="export" element={<Export />} />
                 <Route path="collaborators" element={<Collaborators />} />
               </Route>

@@ -21,4 +21,7 @@ declare module '@exsense/reference/maskGeometry.js' {
     contacts: unknown,
   ): { root: Group; shell: ShellSurface }
   export function setTileTravel(mesh: Mesh, mm: number): void
+  export function setTilePose(mesh: Mesh, mm: number, open?: number, sway?: number, size?: number): void
+  export function tintOf(petal: unknown, tints: readonly string[]): string
+  export function paintPetal(geometry: BufferGeometry, petal: unknown, params: unknown, tints?: readonly string[], strength?: number): void
 }

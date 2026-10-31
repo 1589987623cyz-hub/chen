@@ -1,11 +1,12 @@
-// EX-SENSE mask — reference geometry for Three.js (r150+). Tiles only.
+// EX-SENSE mask — reference geometry for Three.js (r150+).
 // Reads params.json / tiles.json / pins.json produced by generate.py.
 // Units: millimetres. If the scene is in metres, scale the root group by 0.001 — never edit the data.
 //
-// Core rule: every vertex = shellAt(U/a, V/b) + shellNormal(U/a, V/b) * offset
+// Core rule: every vertex = shellAt(U/a, V/b) + shellNormal(U/a, V/b) * (relief(U, V) + offset)
 // where (U, V) is the surface-parameter coordinate stored in tiles.json. Nothing is placed by eye.
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // ------------------------------------------------------------------ shell surface (must match generate.py)
 export function makeShell(params) {
@@ -30,15 +31,22 @@ export function makeShell(params) {
     if (out.z < 0) out.negate();
     return out;
   };
+  // the sculpted face: mm added to the surface, bilinear, the same in generate.py
+  const R_ = params.outlines.reliefUV;
+  const relief = (u, v) => {
+    const x = Math.min(R_.nu - 1.001, Math.max(0, (u - R_.u0) / R_.step)), y = Math.min(R_.nv - 1.001, Math.max(0, (v - R_.v0) / R_.step));
+    const i = Math.floor(x), j = Math.floor(y), s = x - i, w = y - j, at = (p, q) => R_.data[q * R_.nu + p];
+    return at(i, j) * (1 - s) * (1 - w) + at(i + 1, j) * s * (1 - w) + at(i, j + 1) * (1 - s) * w + at(i + 1, j + 1) * s * w;
+  };
   const _n = new THREE.Vector3();
   // (U, V) in mm of parameter space -> 3D point offset along the normal
   const uvTo3D = (u, v, offset = 0, out = new THREE.Vector3()) => {
     const th = u / a, ph = v / b;
-    return shellAt(th, ph, out).addScaledVector(normalAt(th, ph, _n), offset);
+    return shellAt(th, ph, out).addScaledVector(normalAt(th, ph, _n), relief(u, v) + offset);
   };
   const uvNormal = (u, v, out = new THREE.Vector3()) => normalAt(u / a, v / b, out);
   return {
-    a, b, shellAt, normalAt, uvTo3D, uvNormal,
+    a, b, shellAt, normalAt, uvTo3D, uvNormal, relief,
     thetaMax: R(S.thetaMax_deg), phiMin: R(S.phiMin_deg), phiMax: R(S.phiMax_deg),
   };
 }
@@ -57,7 +65,7 @@ export function holeOutline([u0, v0, u1, v1, r], n = 24) {
   return pts;
 }
 
-// ------------------------------------------------------------------ shell mesh (dark base)
+// ------------------------------------------------------------------ shell mesh
 // Dense theta/phi grid; outline + openings are cut by an alpha mask drawn in UV space,
 // so cut edges are exact regardless of mesh density.
 export function buildShellMesh(params, shell, material) {
@@ -94,64 +102,128 @@ export function buildShellMesh(params, shell, material) {
   for (const hole of params.outlines.holesUV) fill(holeOutline(hole), '#000');
   const tex = new THREE.CanvasTexture(cv); tex.colorSpace = THREE.NoColorSpace; tex.anisotropy = 8;
 
-  const mat = material ?? new THREE.MeshStandardMaterial({ color: 0x1e1e1e, roughness: 0.7, metalness: 0.1 });
+  const mat = material ?? new THREE.MeshStandardMaterial({ color: 0xdcbcb0, roughness: 0.75 });
   mat.alphaMap = tex; mat.alphaTest = 0.5; mat.side = THREE.DoubleSide;
   const mesh = new THREE.Mesh(g, mat); mesh.name = 'shell';
   return mesh;
 }
 
-// ------------------------------------------------------------------ one tile = closed solid
-// groups: bottom face, side wall, chamfer bevel, top face (separate vertices -> crisp edges)
-export function buildTileGeometry(tile, params, shell) {
-  const T = params.tiles;
-  const o0 = T.undersideOffset, o2 = T.undersideOffset + T.thickness, o1 = o2 - T.chamfer;
-  const pos = [], idx = [], q = new THREE.Vector3();
-  const push = (u, v, off) => { shell.uvTo3D(u, v, off, q); pos.push(q.x, q.y, q.z); return pos.length / 3 - 1; };
+// ------------------------------------------------------------------ one petal = closed solid
+// A grid along and across the petal. The top sits at the stored offset, the underside one thickness below, walls join them.
+const IVORY = new THREE.Color(0xf2e4da);
+const DEFAULT_TINTS = ['#e39a98', '#e8aaa6', '#ecb6aa', '#97b39a', '#aec2a6', '#efc3a8', '#eed7cc'];
+const hash = (n) => { const x = Math.sin(n * 127.1) * 43758.5453; return x - Math.floor(x); };
 
-  // top/bottom faces are pre-triangulated in tiles.json (UV verts + CCW tris, edges <= ~3 mm)
-  const face = (mesh, off, flip) => {
-    const base = pos.length / 3; for (const [u, v] of mesh.uv) push(u, v, off);
-    for (const [a, b, c] of mesh.tris) flip ? idx.push(base + a, base + c, base + b) : idx.push(base + a, base + b, base + c);
-  };
-  // UV->3D keeps orientation (U ~ +X, V ~ +Y), so CCW in UV = facing +normal
-  face(tile.topFace, o2, false);
-  face(tile.bottomFace, o0, true);
+export const tintOf = (petal, tints) => tints[Math.floor(hash(petal.tint + 3) * tints.length)];
 
-  const band = (ringA, offA, ringB, offB) => {
-    const n = ringA.length, base = pos.length / 3;
-    for (let i = 0; i < n; i++) { push(ringA[i][0], ringA[i][1], offA); push(ringB[i][0], ringB[i][1], offB); }
-    for (let i = 0; i < n; i++) {
-      const a = base + 2 * i, b = a + 1, c = base + 2 * ((i + 1) % n), d = c + 1;
-      idx.push(a, c, b, b, c, d);                                  // outward-facing for CCW rings
-    }
-  };
-  band(tile.outlineUV, o0, tile.outlineUV, o1);                    // side wall
-  band(tile.outlineUV, o1, tile.topUV, o2);                        // bevel
+// Colours a petal from ivory at the base to one of the palette colours at the tip. The choice is fixed per petal, never random.
+export function paintPetal(geometry, petal, params, tints = DEFAULT_TINTS, strength = 1) {
+  const { ns, nt } = params.tiles.petal, mid = (nt - 1) / 2, col = geometry.attributes.color.array, n = ns * nt, shade = new THREE.Color();
+  const tint = new THREE.Color(tintOf(petal, tints));
+  for (let i = 0; i < ns; i++) for (let j = 0; j < nt; j++) {
+    const k = i * nt + j, s = i / (ns - 1), t = Math.abs(j / mid - 1);
+    shade.copy(IVORY).lerp(tint, strength * Math.min(1, 0.22 + 1.05 * Math.pow(s, 1.1)) * (0.75 + 0.25 * t));
+    shade.toArray(col, 3 * k); shade.toArray(col, 3 * (k + n));
+  }
+  geometry.attributes.color.needsUpdate = true;
+}
 
+function petalGeometry(petal, thickness, params, shell) {
+  const { ns, nt } = params.tiles.petal, n = ns * nt;
+  const pos = new Float32Array(n * 6), col = new Float32Array(n * 6), idx = [], q = new THREE.Vector3();
+  for (let i = 0; i < ns; i++) for (let j = 0; j < nt; j++) {
+    const k = i * nt + j, u = petal.uv[2 * k], v = petal.uv[2 * k + 1];
+    shell.uvTo3D(u, v, petal.off[k], q); q.toArray(pos, 3 * k);
+    shell.uvTo3D(u, v, petal.off[k] - thickness, q); q.toArray(pos, 3 * (k + n));
+  }
+  const quad = (a, b, c, d) => idx.push(a, b, d, d, b, c);
+  for (let i = 0; i < ns - 1; i++) for (let j = 0; j < nt - 1; j++) {
+    const a = i * nt + j, b = a + nt, c = b + 1, d = a + 1;
+    quad(a, b, c, d); quad(d + n, c + n, b + n, a + n);
+  }
+  for (let i = 0; i < ns - 1; i++) {
+    const a = i * nt, b = a + nt; quad(b, a, a + n, b + n);
+    const c = a + nt - 1, e = c + nt; quad(c, e, e + n, c + n);
+  }
+  for (let j = 0; j < nt - 1; j++) {
+    const a = j, b = j + 1; quad(a, b, b + n, a + n);
+    const c = (ns - 1) * nt + j, e = c + 1; quad(e, c, c + n, e + n);
+  }
   const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setIndex(idx); g.computeVertexNormals();
+  paintPetal(g, petal, params);
   return g;
 }
 
+export const buildTileGeometry = (tile, params, shell) => petalGeometry(tile.petal, params.tiles.thickness, params, shell);
+
+// Gold rim, veins and a bead at the tip, one material group each so they can be switched separately. They ride with the petal.
+function petalDetail(geometry, petal, params) {
+  const { ns, nt } = params.tiles.petal, mid = (nt - 1) / 2, pos = geometry.attributes.position.array, nor = geometry.attributes.normal.array;
+  const point = (i, j, lift) => {
+    const j0 = Math.min(nt - 2, Math.floor(j)), f = j - j0, a = 3 * (i * nt + j0), b = a + 3;
+    const p = new THREE.Vector3(pos[a] * (1 - f) + pos[b] * f, pos[a + 1] * (1 - f) + pos[b + 1] * f, pos[a + 2] * (1 - f) + pos[b + 2] * f);
+    const n = new THREE.Vector3(nor[a], nor[a + 1], nor[a + 2]); if (n.z < 0) n.negate();
+    return p.addScaledVector(n, lift);
+  };
+  const tube = (points, radius, segments, sides = 4) => new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), segments, radius, sides);
+  const rim = [], veins = [];
+  for (const j of [0, nt - 1]) {
+    const edge = []; for (let i = 0; i < ns; i++) edge.push(point(i, j, 0));
+    rim.push(tube(edge, 0.17, 70, 5));
+  }
+  const rib = []; for (let i = 2; i < ns - 2; i += 2) rib.push(point(i, mid, 0.08));
+  veins.push(tube(rib, 0.1, 36));
+  for (const f of [0.18, 0.34, 0.5, 0.66]) for (const side of [-1, 1]) {
+    const start = Math.floor(f * ns), run = Math.min(ns - 1 - start, Math.floor(0.34 * ns)), vein = [];
+    for (let k = 0; k <= 6; k++) { const a = k / 6; vein.push(point(start + Math.round(run * a), mid + side * mid * 0.92 * Math.pow(a, 0.8), 0.08)); }
+    veins.push(tube(vein, 0.055, 12));
+  }
+  const tip = point(ns - 1, mid, 0.2);
+  const bead = new THREE.SphereGeometry(0.45 + 0.65 * petal.size, 14, 10).translate(tip.x, tip.y, tip.z);
+  return mergeGeometries([mergeGeometries(rim), mergeGeometries(veins), bead], true);
+}
+
+const gold = () => new THREE.MeshStandardMaterial({ color: 0xd9a56c, metalness: 1, roughness: 0.3 });
+const hingeOf = (geometry, params) => {
+  const { ns, nt } = params.tiles.petal, mid = (nt - 1) / 2, at = (i) => new THREE.Vector3().fromBufferAttribute(geometry.attributes.position, i * nt + mid);
+  return { pivot: at(0), along: at(ns - 1).sub(at(0)).normalize() };
+};
+
 export function buildTiles(tilesJson, params, shell, materialFor) {
   const grp = new THREE.Group(); grp.name = 'tiles';
+  const trimMaterials = [gold(), gold(), gold()]; grp.userData.trim = { rim: trimMaterials[0], veins: trimMaterials[1], beads: trimMaterials[2] };
   for (const t of tilesJson.tiles) {
-    const mat = materialFor ? materialFor(t) : new THREE.MeshStandardMaterial({ color: 0xd9d9d6, roughness: 0.35, metalness: 0.75 });
-    const mesh = new THREE.Mesh(buildTileGeometry(t, params, shell), mat);
+    const mat = materialFor ? materialFor(t) : new THREE.MeshPhysicalMaterial({ vertexColors: true, side: THREE.DoubleSide, roughness: 0.55, sheen: 0.25, sheenRoughness: 0.5, sheenColor: new THREE.Color(0xffe9e2), transparent: true, opacity: 0.93 });
+    const mesh = new THREE.Mesh(buildTileGeometry(t, params, shell), mat); mesh.castShadow = mesh.receiveShadow = true;
+    mesh.renderOrder = 10 + t.petal.rank * 2;                      // the stacking order, so see-through layers blend correctly
+    const trim = new THREE.Mesh(petalDetail(mesh.geometry, t.petal, params), trimMaterials);
+    trim.castShadow = true; trim.renderOrder = mesh.renderOrder + 1; mesh.add(trim);
     mesh.name = t.id;
-    mesh.userData = { tile: t, normal: new THREE.Vector3(...t.normal), travel: 0 };
+    const normal = new THREE.Vector3(...t.normal), { pivot, along } = hingeOf(mesh.geometry, params);
+    const reach = Math.min(1, Math.hypot(t.centroid2D[0] / 76, (t.centroid2D[1] - 12) / 96));   // outer petals open furthest
+    mesh.userData = { tile: t, normal, travel: 0, open: 0, pivot, hinge: new THREE.Vector3().crossVectors(along, normal).normalize(), openWeight: 0.35 + 0.65 * reach, sway: 0, size: 1, outward: t.centroid2D[0] > 0 ? -1 : 1 };
     grp.add(mesh);
   }
   return grp;
 }
 
-// SPACE state: push a tile inward along its normal (0 … params.tiles.travelIn mm)
-export function setTileTravel(mesh, mm) {
-  mesh.userData.travel = mm;
-  mesh.position.copy(mesh.userData.normal).multiplyScalar(-mm);
+// A petal's pose: pushed in along its normal (0 ... params.tiles.travelIn mm), plus three display-only changes
+// about its base: open (radians), sway sideways toward the mask edge (radians) and size.
+const _q = new THREE.Quaternion(), _s = new THREE.Quaternion(), _p = new THREE.Vector3();
+export function setTilePose(mesh, mm, open = mesh.userData.open, sway = mesh.userData.sway, size = mesh.userData.size) {
+  const u = mesh.userData; u.travel = mm; u.open = open; u.sway = sway; u.size = size;
+  _q.setFromAxisAngle(u.hinge, open * u.openWeight).multiply(_s.setFromAxisAngle(u.normal, sway * u.outward));
+  mesh.quaternion.copy(_q); mesh.scale.setScalar(size);
+  mesh.position.copy(u.pivot).sub(_p.copy(u.pivot).multiplyScalar(size).applyQuaternion(_q)).addScaledVector(u.normal, -mm);
+  u.contact?.position.copy(u.normal).multiplyScalar(-mm);
 }
 
-// ------------------------------------------------------------------ pins (visible in gaps at lattice vertices)
+// SPACE state: push a tile inward along its normal
+export const setTileTravel = (mesh, mm) => setTilePose(mesh, mm);
+
+// ------------------------------------------------------------------ pins (low posts at lattice vertices)
 export function buildPins(pinsJson, params, material) {
   const P = params.pins;
   const geo = new THREE.CylinderGeometry(P.radius, P.radius, P.height, 20, 1).translate(0, P.height / 2, 0);
@@ -203,7 +275,7 @@ export function buildSensorGeometry(sensor, params) {
   };
 }
 
-// Sensors stay put. Contacts are children of their tile, so they travel with it.
+// Sensors stay put. Contacts follow their petal's travel, not its opening.
 export function buildSensors(sensorsJson, params) {
   const grp = new THREE.Group(); grp.name = 'sensors';
   const metal = new THREE.MeshStandardMaterial({ color: 0xb9bcbf, roughness: 0.28, metalness: 0.9 });
@@ -217,21 +289,24 @@ export function buildSensors(sensorsJson, params) {
 }
 
 export function attachContacts(tiles, contactsJson, params) {
+  const grp = new THREE.Group(); grp.name = 'contacts';
   const soft = new THREE.MeshStandardMaterial({ color: 0xe9e1d8, roughness: 0.6, metalness: 0 });
   for (const c of contactsJson.contacts) {
     const mesh = new THREE.Mesh(buildContactGeometry(c, params), soft); mesh.name = c.id;
-    tiles.getObjectByName(c.tile).add(mesh);
+    tiles.getObjectByName(c.tile).userData.contact = mesh;
+    grp.add(mesh);
   }
+  return grp;
 }
 
 // ------------------------------------------------------------------ whole mask
 export function buildMask(params, tilesJson, pinsJson, sensorsJson, contactsJson) {
   const shell = makeShell(params);
   const root = new THREE.Group(); root.name = 'EX-SENSE';
-  root.add(buildShellMesh(params, shell));
+  const base = buildShellMesh(params, shell, new THREE.MeshStandardMaterial({ color: 0xdcbcb0, roughness: 0.75 })); base.receiveShadow = true; root.add(base);
   root.add(buildPins(pinsJson, params));
   const tiles = buildTiles(tilesJson, params, shell);
-  attachContacts(tiles, contactsJson, params);
+  root.add(attachContacts(tiles, contactsJson, params));
   root.add(tiles);
   root.add(buildSensors(sensorsJson, params));
   return { root, shell };
