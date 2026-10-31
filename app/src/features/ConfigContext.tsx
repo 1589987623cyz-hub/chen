@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Outlet, useParams } from 'react-router-dom'
+import { Link, Outlet, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import type { Config, NumericKey } from '@/domain/params'
 import { paramByKey } from '@/domain/params'
@@ -44,7 +44,15 @@ export function ConfigRoute() {
   }, [id])
 
   if (loaded === 'loading') return <p role="status">{t('common.loading')}</p>
-  if (!loaded) return <p role="alert">{t('common.notFound')}</p>
+  if (!loaded) {
+    return (
+      <div className="max-w-xl">
+        <p role="alert" className="font-medium">{t('common.notFound')}</p>
+        <p className="mt-2 text-muted">{t('link.notYours')}</p>
+        <Button asChild className="mt-4"><Link to="/start">{t('home.start')}</Link></Button>
+      </div>
+    )
+  }
   return (
     <ConfigProvider key={id} initial={loaded.config} role={loaded.role}>
       <Outlet />

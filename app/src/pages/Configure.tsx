@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { NUMERIC_PARAMS, SIZE_PRESETS, ZONE_IDS, type Mode, type NumericKey, type PetalLook, type SizePreset, type ZoneId } from '@/domain/params'
+import { encodeShare } from '@/domain/share'
 import { estimateMass, hasBlockingIssue, hiddenProSettings } from '@/domain/validate'
 import { useConfig } from '@/features/ConfigContext'
 import { MaskStage } from '@/features/MaskStage'
@@ -67,6 +68,31 @@ function FitPanel({ onHighlight }: { onHighlight: (zone: ZoneId | null) => void 
           </details>
         )}
       </Section>
+    </div>
+  )
+}
+
+/** A link anyone can open, without an account or a database. */
+function CopyLink() {
+  const { t } = useI18n()
+  const { config } = useConfig()
+  const [copied, setCopied] = useState(false)
+  const [fallback, setFallback] = useState('')
+  const copy = async () => {
+    const link = `${location.origin}${import.meta.env.BASE_URL}start#${encodeShare(config)}`
+    try {
+      await navigator.clipboard.writeText(link)
+      setCopied(true)
+      setFallback('')
+    } catch {
+      setFallback(link)
+    }
+  }
+  return (
+    <div className="grid gap-1">
+      <Button variant="outline" onClick={copy}>{t('link.copy')}</Button>
+      <p role="status" className="text-sm text-muted">{copied ? t('link.copied') : ''}</p>
+      {fallback && <p className="max-w-md text-sm break-all">{fallback}</p>}
     </div>
   )
 }
@@ -255,7 +281,10 @@ export default function Configure() {
     <div>
       <header className="mb-5 flex flex-wrap items-end justify-between gap-4">
         <PageTitle>{config.name}</PageTitle>
-        <TextField label={t('cfg.name')} value={config.name} onChange={(e) => update({ name: e.target.value })} />
+        <div className="flex flex-wrap items-start gap-3">
+          <TextField label={t('cfg.name')} value={config.name} onChange={(e) => update({ name: e.target.value })} />
+          <div className="pt-7"><CopyLink /></div>
+        </div>
       </header>
       <div className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-2">
         <Segmented<Mode>

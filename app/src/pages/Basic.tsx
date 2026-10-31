@@ -1,7 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { createConfig, parseConfig, SCENES } from '@/domain/params'
+import { decodeShare } from '@/domain/share'
 import { configJson } from '@/export/bundles'
 import { useTheme, type Theme } from '@/features/Layout'
 import { PageTitle, Segmented, SelectField, SwitchField, TextField } from '@/features/shared'
@@ -45,7 +46,7 @@ export function Home() {
           <p className="mb-2 tracking-[0.2em] text-sage-ink">FEEL BEYOND SIGHT</p>
           <PageTitle>{t('home.title')}</PageTitle>
           <p className="mt-4 text-lg">{t('home.lead')}</p>
-          <Button asChild className="mt-6"><Link to="/dashboard">{t('home.start')}</Link></Button>
+          <Button asChild className="mt-6"><Link to="/start">{t('home.start')}</Link></Button>
         </div>
         <div className="grid gap-3">
           <div className="h-[26rem] overflow-hidden rounded-2xl border border-line lg:h-[34rem]">
@@ -90,6 +91,37 @@ export function Home() {
           </ul>
         </div>
       </section>
+    </div>
+  )
+}
+
+/** The door a link opens: a shared design becomes the visitor's own copy, anything else their latest or a new one. */
+async function openFromLink(hash: string, name: string) {
+  if (hash.length > 1) return (await saveConfig(decodeShare(hash.slice(1)))).id
+  const [latest] = await listConfigs()
+  return latest?.id ?? (await saveConfig(createConfig(name))).id
+}
+
+export function Start() {
+  const { t } = useI18n()
+  const navigate = useNavigate()
+  const { hash } = useLocation()
+  const [failed, setFailed] = useState(false)
+  const started = useRef(false)
+
+  useEffect(() => {
+    if (started.current) return
+    started.current = true
+    openFromLink(hash, t('dash.defaultName'))
+      .then((id) => navigate(`/configure/${id}`, { replace: true }))
+      .catch(() => setFailed(true))
+  }, [hash, navigate, t])
+
+  if (!failed) return <p role="status">{t('common.loading')}</p>
+  return (
+    <div className="max-w-xl">
+      <p role="alert" className="font-medium text-danger">{t('link.broken')}</p>
+      <Button asChild className="mt-4"><Link to="/dashboard">{t('link.toDashboard')}</Link></Button>
     </div>
   )
 }

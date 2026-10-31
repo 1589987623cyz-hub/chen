@@ -5,7 +5,7 @@ import './index.css'
 import { ConfigRoute } from '@/features/ConfigContext'
 import { Layout, ThemeProvider } from '@/features/Layout'
 import { I18nProvider } from '@/i18n'
-import { Accessibility, Auth, Dashboard, Home, Invite, Settings } from '@/pages/Basic'
+import { Accessibility, Auth, Dashboard, Home, Invite, Settings, Start } from '@/pages/Basic'
 import Collaborators from '@/pages/Collaborators'
 import Configure from '@/pages/Configure'
 import Export from '@/pages/Export'
@@ -19,6 +19,7 @@ createRoot(document.getElementById('root')!).render(
           <Routes>
             <Route element={<Layout />}>
               <Route index element={<Home />} />
+              <Route path="start" element={<Start />} />
               <Route path="auth" element={<Auth />} />
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="configure/:id" element={<ConfigRoute />}>
